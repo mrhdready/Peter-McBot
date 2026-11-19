@@ -1,0 +1,324 @@
+diff --git a/index.d.ts b/index.d.ts
+index be905a97f64d73b843b5c3c0cc18cba13a0da210..d639484c50e8e31f0f53eba03c03f4e5b3f218a5 100644
+--- a/index.d.ts
++++ b/index.d.ts
+@@ -11,7 +11,11 @@ declare module 'bedrock-protocol' {
+     // Remote ID for clients; local ID for servers (generated when omitted by createServer).
+     networkId?: string | bigint
+     // LAN discovery signalling or authenticated Minecraft services signalling (default: lan).
+-    signalling?: 'lan' | 'services'
++    signalling?: 'lan' | 'services' | 'http'
++    // HTTP mode pins the first verified operator key here and rejects subsequent changes.
++    serverKeyPath?: string
++    // Override Docker-private server ICE addresses while retaining their UDP ports.
++    iceHost?: string
+     // Maximum wait for services signalling credentials in milliseconds (default: 15000).
+     signallingConnectTimeout?: number
+   }
+diff --git a/src/client.js b/src/client.js
+index fa71ddd1faa140e3fc0628c514ef99cc9fef8d6c..c50d1d0c25695717cc0ddc71f2f5ef2ff2fa98bd 100644
+--- a/src/client.js
++++ b/src/client.js
+@@ -6,6 +6,7 @@ const Options = require('./options')
+ const auth = require('./client/auth')
+ const initRaknet = require('./rak')
+ const { NethernetClient } = require('./nethernet')
++const { HttpNethernetClient } = require('./nethernet/http')
+ const KeyExchange = require('./handshake/keyExchange')
+ const Login = require('./handshake/login')
+ const LoginVerify = require('./handshake/loginVerify')
+@@ -63,7 +64,9 @@ class Client extends Connection {
+ 
+     if (this.options.transport === 'nethernet') {
+       this.nethernet ??= {}
+-      this.connection = new NethernetClient({ networkId, host: this.options.host, webrtcBackend: this.options.nethernet.webrtcBackend })
++      this.connection = this.options.nethernet.signalling === 'http'
++        ? new HttpNethernetClient(this.options)
++        : new NethernetClient({ networkId, host: this.options.host, webrtcBackend: this.options.nethernet.webrtcBackend })
+       this.batchHeader = null
+       this.disableEncryption = true
+     } else if (this.options.transport === 'raknet') {
+@@ -95,6 +98,7 @@ class Client extends Connection {
+     if (this._closed) throw new Error('Client is closed')
+     this.once('session', (sessionData) => {
+       if (this._closed) return
++      if (this.options.offline && this.options.nethernet.signalling === 'http') this.createClientChain(null, true)
+       if (this.options.transport === 'nethernet' && this.options.nethernet.signalling === 'services') {
+         const { NethernetSignal } = require('./nethernet/signalling')
+         this.nethernet.signalling = new NethernetSignal(
+@@ -136,7 +140,7 @@ class Client extends Connection {
+   validateOptions () {
+     switch (this.options.transport) {
+       case 'nethernet':
+-        if (!this.options.nethernet.networkId) throw Error('Invalid nethernet.networkId')
++        if (this.options.nethernet.signalling !== 'http' && !this.options.nethernet.networkId) throw Error('Invalid nethernet.networkId')
+         break
+       case 'raknet':
+         if (!this.options.host || this.options.port == null) throw Error('Invalid host/port')
+diff --git a/src/createClient.js b/src/createClient.js
+index 1f5909eca2c31adeccd0d3cfd4a629c715910174..a9194f06928ca427726529a42d46f6fbe33509e7 100644
+--- a/src/createClient.js
++++ b/src/createClient.js
+@@ -6,6 +6,7 @@ const Options = require('./options')
+ const advertisement = require('./server/advertisement')
+ const auth = require('./client/auth')
+ const { NethernetClient } = require('./nethernet')
++const { HttpNethernetClient } = require('./nethernet/http')
+ 
+ /** @param {{ version?: string, host: string, port?: number, connectTimeout?: number, skipPing?: boolean }} options */
+ function createClient (options) {
+@@ -22,7 +23,9 @@ function createClient (options) {
+     if (!config.skipPing && !(config.transport === 'nethernet' && config.nethernet.signalling === 'services')) {
+       client._discoveryAbort = new AbortController()
+       try {
+-        ad = await ping({
++        ad = config.transport === 'nethernet' && config.nethernet.signalling === 'http'
++          ? await HttpNethernetClient.ping(config, client._discoveryAbort.signal)
++          : await ping({
+           ...config,
+           nethernet: config.transport === 'nethernet' ? config.nethernet : undefined,
+           timeout: config.pingTimeout,
+@@ -30,6 +33,7 @@ function createClient (options) {
+         })
+       } catch (error) {
+         if (client._closed) return
++        if (config.nethernet.signalling === 'http') throw error
+         client.conLog?.(`Server discovery failed: ${error.message}; using configured defaults`)
+       }
+     }
+@@ -45,6 +49,7 @@ function createClient (options) {
+         config.version = Object.keys(Options.Versions).find(version => Options.Versions[version] === protocol)
+         if (!config.version) throw new Error(`Unsupported server protocol ${protocol}: no minecraft-data support`)
+       }
++      if (config.nethernet.signalling === 'http' && protocol !== Options.Versions[config.version]) throw new Error(`Server protocol ${protocol} does not match configured version ${config.version}`)
+       client.conLog?.(`Connecting over ${config.transport} to ${ad.networkId ?? `${config.host}:${config.port}`} ${ad.motd} (${ad.levelName}), version ${config.version}`)
+     }
+     client.init()
+@@ -80,7 +85,9 @@ function connect (client) {
+ 
+     if (client.versionLessThanOrEqualTo('1.20.80')) client.queue('tick_sync', { request_time: BigInt(Date.now()), response_time: 0n })
+ 
+-    sleep(500).then(() => client.queue('request_chunk_radius', { chunk_radius: client.viewDistance || 10 }))
++    sleep(500).then(() => {
++      if (!client._closed) client.queue('request_chunk_radius', { chunk_radius: client.viewDistance || 10, max_radius: client.viewDistance || 10 })
++    })
+   })
+ 
+   if (client.versionLessThanOrEqualTo('1.20.80')) {
+@@ -116,7 +123,7 @@ async function ping ({ host, port = 19132, nethernet, transport = nethernet ? 'n
+   signal.throwIfAborted()
+   try {
+     return await Promise.any((transport ? [transport] : ['raknet', 'nethernet']).map(async selected => {
+-      const { RakClient } = initRaknet('raknet-native')
++      const RakClient = selected === 'raknet' ? initRaknet('raknet-native').RakClient : null
+       const con = selected === 'nethernet'
+         ? new NethernetClient({ ...nethernet, host: host ?? (transport ? '255.255.255.255' : '127.0.0.1') })
+         : new RakClient({ host: host ?? '127.0.0.1', port })
+diff --git a/src/nethernet/http.js b/src/nethernet/http.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..8c37921f94abed677baf79780a1c685923465379
+--- /dev/null
++++ b/src/nethernet/http.js
+@@ -0,0 +1,157 @@
++const { randomBytes } = require('node:crypto')
++const { isIP } = require('node:net')
++const { EventEmitter } = require('node:events')
++const { getWebRTC } = require('nethernet/src/webrtc')
++const { Connection } = require('nethernet/src/connection')
++const { attachIdentity } = require('nethernet/src/identity')
++const { verifyServerIdentity } = require('./httpIdentity')
++
++function joinUrl (options) {
++  const url = new URL('http://localhost/v1/join')
++  url.hostname = options.host
++  url.port = options.port ?? 19132
++  return url
++}
++
++// Explicit NAT override: retain the server's UDP port and signed DTLS fingerprints.
++function rewriteIceHost (sdp, host) {
++  if (!host) return sdp
++  if (!isIP(host)) throw new Error('NetherNet iceHost must be an IP address')
++  return sdp.split(/\r?\n/).map(line => {
++    if (!line.startsWith('a=candidate:')) return line
++    const parts = line.split(' ')
++    if (parts[2]?.toLowerCase() !== 'udp') return line
++    parts[4] = host
++    return parts.join(' ')
++  }).join('\r\n')
++}
++
++// BDS 1.26.50+ uses a full-ICE HTTP offer/answer exchange, not LAN UDP signalling.
++class HttpNethernetClient extends EventEmitter {
++  constructor (options) {
++    super()
++    this.options = options
++    this.nethernet = {}
++    this.abort = new AbortController()
++    this.closed = false
++    this.connected = false
++    this.onConnected = () => {}
++    this.onCloseConnection = () => {}
++    this.onEncapsulated = () => {}
++    this.onError = () => {}
++    this.on('encapsulated', data => this.onEncapsulated({ buffer: data }))
++  }
++
++  static async ping (options, signal) {
++    const response = await fetch(joinUrl(options), {
++      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(options.pingTimeout || 5000)]) : AbortSignal.timeout(options.pingTimeout || 5000),
++      redirect: 'error'
++    })
++    if (!response.ok) throw new Error(`BDS metadata: HTTP ${response.status}`)
++    const info = await response.json()
++    if (!Number.isSafeInteger(info.protocol)) throw new Error('BDS metadata has no valid protocol number')
++    return { transport: 'nethernet', protocol: info.protocol, gameVersion: info.version, motd: info.name, levelName: info.level }
++  }
++
++  async connect () {
++    const { RTCPeerConnection } = getWebRTC(this.options.nethernet.webrtcBackend)
++    const pc = this.pc = new RTCPeerConnection({ iceServers: [], bundlePolicy: 'max-bundle' })
++    const endpoints = sdp => sdp.split(/\r?\n/).filter(line => line.startsWith('a=candidate:')).slice(0, 12).map(line => {
++      const parts = line.split(' ')
++      return parts[4] + ':' + parts[5] + '/' + parts[7]
++    }).join(', ')
++    pc.oniceconnectionstatechange = () => this.options.conLog?.(`NetherNet ICE ${pc.iceConnectionState}`)
++    const connection = this.connection = new Connection(this, randomBytes(8).readBigUInt64LE().toString(), pc)
++    const live = () => !this.closed && !connection.closed
++    const reliable = pc.createDataChannel('ReliableDataChannel', { ordered: true })
++    const unreliable = pc.createDataChannel('UnreliableDataChannel', { ordered: false, maxRetransmits: 0 })
++    reliable.binaryType = unreliable.binaryType = 'arraybuffer'
++    connection.setChannels(reliable, unreliable)
++    const opened = reliable.onopen
++    reliable.onopen = () => {
++      if (!live()) return
++      try {
++        opened?.()
++        this.connected = true
++        this.onConnected()
++      } catch (error) { this.fail(error) }
++    }
++    const receive = reliable.onmessage
++    reliable.onmessage = event => {
++      if (!live()) return
++      try {
++        if (event.data.byteLength + (connection.buf?.length || 0) > 16 * 1024 * 1024) throw new Error('NetherNet message exceeds 16 MiB')
++        receive(event)
++      } catch (error) { this.fail(error) }
++    }
++    unreliable.onmessage = event => {
++      if (!live()) return
++      try {
++        const data = Buffer.from(event.data)
++        if (data.length < 2 || data[0] !== 0) throw new Error('Invalid unreliable NetherNet frame')
++        this.onEncapsulated({ buffer: data.subarray(1) })
++      } catch (error) { this.fail(error) }
++    }
++    pc.onconnectionstatechange = () => {
++      this.options.conLog?.(`NetherNet WebRTC ${pc.connectionState}`)
++      if (live() && ['failed', 'closed', 'disconnected'].includes(pc.connectionState)) this.fail(new Error(`WebRTC ${pc.connectionState}`))
++    }
++    try {
++      const offer = await pc.createOffer()
++      if (!live()) return
++      await pc.setLocalDescription(offer)
++      if (!live()) return
++      this.options.conLog?.(`NetherNet local ICE: ${endpoints(pc.localDescription.sdp)}`)
++      const url = joinUrl(this.options)
++      url.pathname += '/' + encodeURIComponent(connection.address)
++      const response = await fetch(url, {
++        method: 'POST', headers: { 'Content-Type': 'application/sdp' },
++        body: attachIdentity(pc.localDescription.sdp, this.nethernet.identity),
++        signal: AbortSignal.any([this.abort.signal, AbortSignal.timeout(this.options.connectTimeout || 9000)]),
++        redirect: 'error'
++      })
++      if (!response.ok) throw new Error(`BDS SDP exchange: HTTP ${response.status} ${(await response.text()).slice(0, 200)}`)
++      const sdp = await response.text()
++      if (!live()) return
++      if (!sdp.startsWith('v=')) throw new Error(`BDS rejected the offer: ${sdp.slice(0, 100)} (offline login requires ONLINE_MODE=false)`)
++      if (sdp.length > 1024 * 1024 || !sdp.includes('m=application') || !sdp.includes('a=candidate:')) throw new Error('BDS returned an invalid SDP answer')
++      verifyServerIdentity(sdp, this.options.nethernet.serverKeyPath)
++      this.options.conLog?.(`NetherNet remote ICE: ${endpoints(sdp)}`)
++      // Verify the signed fingerprints and pinned operator key before removing the assertion.
++      const answer = rewriteIceHost(sdp.replace(/^a=identity:.*\r?\n/gm, ''), this.options.nethernet.iceHost)
++      if (this.options.nethernet.iceHost) this.options.conLog?.(`NetherNet effective ICE: ${endpoints(answer)}`)
++      await pc.setRemoteDescription({ type: 'answer', sdp: answer })
++    } catch (error) {
++      if (!this.closed) this.fail(error)
++    }
++  }
++
++  sendReliable (data) {
++    if (!this.connected || this.closed) throw new Error('BDS data channel is not connected')
++    return this.connection.send(data)
++  }
++
++  handleConnectionClosed (connection, reason) {
++    if (!this.closed) {
++      this.close()
++      this.onCloseConnection(reason)
++    }
++  }
++
++  fail (error) {
++    if (this.closed) return
++    try { this.onError(error) } finally { this.close() }
++  }
++
++  close () {
++    if (this.closed) return
++    this.closed = true
++    this.connected = false
++    this.abort.abort()
++    // Connection.close invokes the async peer close; consume that promise as well.
++    this.connection?.close()
++    Promise.resolve(this.pc?.close()).catch(() => {})
++  }
++}
++
++module.exports = { HttpNethernetClient, rewriteIceHost }
+diff --git a/src/nethernet/httpIdentity.js b/src/nethernet/httpIdentity.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..b75f9d0ebf4378a035c222ce656ec5fa9d481a5a
+--- /dev/null
++++ b/src/nethernet/httpIdentity.js
+@@ -0,0 +1,39 @@
++const crypto = require('node:crypto')
++const fs = require('node:fs')
++const path = require('node:path')
++const JWT = require('jsonwebtoken')
++const { extractFingerprints, fingerprintsPayload } = require('nethernet/src/identity')
++
++function verifyServerIdentity (sdp, pinPath) {
++  if (!pinPath) throw new Error('HTTP NetherNet requires a serverKeyPath for operator-key pinning')
++  const identities = sdp.split(/\r?\n/).filter(line => line.startsWith('a=identity:'))
++  if (identities.length !== 1) throw new Error('Expected one BDS server identity assertion')
++  const envelope = JSON.parse(Buffer.from(identities[0].slice(11), 'base64').toString('utf8'))
++  const assertion = JSON.parse(envelope.assertion)
++  const decoded = JWT.decode(assertion.token)
++  if (!decoded?.cpk) throw new Error('BDS server identity has no public key')
++  const cpk = decoded.cpk
++  const key = typeof cpk === 'object'
++    ? crypto.createPublicKey({ key: cpk, format: 'jwk' })
++    : crypto.createPublicKey(cpk.includes('BEGIN') ? cpk : { key: Buffer.from(cpk, 'base64'), format: 'der', type: 'spki' })
++  JWT.verify(assertion.token, key, { algorithms: ['ES256', 'ES384'] })
++  const [header, payload, signature, extra] = assertion.fingerprints.split('.')
++  const algorithm = JSON.parse(Buffer.from(header, 'base64url').toString('utf8')).alg
++  const digest = { ES256: 'sha256', ES384: 'sha384' }[algorithm]
++  const fingerprints = extractFingerprints(sdp)
++  if (!digest || payload !== '' || extra !== undefined || !signature || fingerprints.length === 0) throw new Error('Invalid BDS fingerprint assertion')
++  const canonical = Buffer.from(fingerprintsPayload(fingerprints)).toString('base64url')
++  if (!crypto.verify(digest, Buffer.from(header + '.' + canonical), { key, dsaEncoding: 'ieee-p1363' }, Buffer.from(signature, 'base64url'))) throw new Error('BDS fingerprint signature is invalid')
++  const fingerprint = crypto.createHash('sha256').update(key.export({ format: 'der', type: 'spki' })).digest('hex')
++  // First connection trusts the configured LAN endpoint; later connections reject key changes.
++  fs.mkdirSync(path.dirname(pinPath), { recursive: true })
++  try {
++    fs.writeFileSync(pinPath, fingerprint + '\n', { flag: 'wx', mode: 0o600 })
++  } catch (error) {
++    if (error.code !== 'EEXIST') throw error
++    if (fs.readFileSync(pinPath, 'utf8').trim() !== fingerprint) throw new Error('BDS operator key changed; verify the server before replacing its pin')
++  }
++  return fingerprint
++}
++
++module.exports = { verifyServerIdentity }

@@ -1,0 +1,28 @@
+{
+  "name": "mc-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AFK Bedrock bot with local web control",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "packageManager": "pnpm@11.25.0",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/main.js",
+    "test": "tsc && node --test test/*.test.cjs",
+    "check:compatibility": "node scripts/check-compatibility.cjs",
+    "probe:server": "node scripts/probe-server.cjs",
+    "smoke:server": "tsc && node scripts/smoke-server.cjs",
+    "prepare:arcane": "node --env-file=config/arcane.env scripts/prepare-arcane.cjs"
+  },
+  "dependencies": {
+    "bedrock-protocol": "3.61.0",
+    "prismarine-chunk": "1.41.0",
+    "prismarine-registry": "1.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3"
+  }
+}

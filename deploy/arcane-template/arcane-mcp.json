@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "web": [{ "service": "bot", "port": 3000 }],
+  "readiness": { "services": ["bot"], "timeoutSeconds": 90 },
+  "test": {
+    "service": "test",
+    "command": ["node", "/test/container-test.cjs"],
+    "timeoutSeconds": 120
+  }
+}

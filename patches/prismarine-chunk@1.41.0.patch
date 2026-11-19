@@ -1,0 +1,41 @@
+diff --git a/src/bedrock/1.18/SubChunk.js b/src/bedrock/1.18/SubChunk.js
+index 35cd85306027d1d27a5f0b50748ecd66d6f8fb03..3030f985085a2ad2a7883094028112b592fea216 100644
+--- a/src/bedrock/1.18/SubChunk.js
++++ b/src/bedrock/1.18/SubChunk.js
+@@ -8,7 +8,8 @@ class SubChunk118 extends SubChunk13 {
+ 
+     for (let i = 0; i < paletteSize; i++) {
+       const runtimeId = stream.readZigZagVarInt()
+-      const block = this.registry.blocksByRuntimeId[runtimeId]
++      const block = this.registry.blocksByRuntimeId?.[runtimeId]
++      if (!block) throw new Error(`Unknown block runtime ID ${runtimeId}`)
+       this.palette[storageLayer][i] = { stateId: block.stateId, ...block, count: 0 }
+     }
+   }
+@@ -17,8 +18,10 @@ class SubChunk118 extends SubChunk13 {
+     if ((format === StorageType.Runtime) && (bitsPerBlock === 0)) {
+       this.palette[storageLayer] = []
+       this.blocks[storageLayer] = new PalettedStorage(1)
+-      const stateId = stream.readVarInt() >> 1
+-      this.addToPalette(storageLayer, stateId)
++      const runtimeId = stream.readZigZagVarInt()
++      const block = this.registry.blocksByRuntimeId?.[runtimeId]
++      if (!block) throw new Error(`Unknown block runtime ID ${runtimeId}`)
++      this.addToPalette(storageLayer, block.stateId)
+       return
+     }
+     return super.loadPalettedBlocks(...arguments)
+diff --git a/src/index.js b/src/index.js
+index b4a2abe473808307d513c25b1ed59c842879ba91..df920e600212e9fe75beb80a7e65c354bfdea556 100644
+--- a/src/index.js
++++ b/src/index.js
+@@ -25,7 +25,8 @@ const chunkImplementations = {
+     1.18: require('./bedrock/1.18/chunk'),
+     1.19: require('./bedrock/1.18/chunk'),
+     '1.20': require('./bedrock/1.18/chunk'),
+-    1.21: require('./bedrock/1.18/chunk')
++    1.21: require('./bedrock/1.18/chunk'),
++    '1.26': require('./bedrock/1.18/chunk')
+   }
+ }
+ 

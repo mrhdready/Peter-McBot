@@ -1,0 +1,7 @@
+# bedrock-protocol pins prismarine-xbox-services to a GitHub commit.
+blockExoticSubdeps: false
+# HTTP-NetherNet uses pure JS WebRTC; no native install scripts run.
+ignoreScripts: true
+patchedDependencies:
+  bedrock-protocol@3.61.0: patches/bedrock-protocol@3.61.0.patch
+  prismarine-chunk@1.41.0: patches/prismarine-chunk@1.41.0.patch
