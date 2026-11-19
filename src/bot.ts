@@ -55,6 +55,7 @@ export class BotController {
 
   step () {
     if (this.stopped) return
+    this.state.flushSurfaceChanges()
     this.state.tick++
     for (const command of this.commands.splice(0)) {
       if (typeof command === 'object') {

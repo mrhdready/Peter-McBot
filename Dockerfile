@@ -17,5 +17,5 @@ COPY --chown=node:node package.json ./
 RUN mkdir /app/data && chown node:node /app/data
 USER node
 EXPOSE 3000
-HEALTHCHECK --interval=30s --timeout=5s CMD node -e "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+HEALTHCHECK --interval=30s --timeout=5s CMD ["node", "dist/healthcheck.js"]
 CMD ["node", "dist/main.js"]

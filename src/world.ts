@@ -11,6 +11,8 @@ export type WorldColumn = {
   attempts: Map<number, number>; requests: Map<number, Request>
 }
 type BlockInfo = { min: number; max: number }
+export type SurfaceCell = [string, number | null, boolean]
+export type SurfaceTile = { x: number; z: number; dimension: number; cells: Array<SurfaceCell | null> }
 type SurfaceMap = {
   x: number; z: number; width: number; height: number; dimension: number;
   palette: string[]; cells: Array<[number, number | null, boolean] | null>;
@@ -26,6 +28,9 @@ export function dimensionId (dimension: number | string | null): number | null {
 }
 
 export class ChunkWorld {
+  onSurfaceTile: ((tile: SurfaceTile) => void) | null = null
+  private dirtySurface = new Set<WorldColumn>()
+  private surfaceCache = new WeakMap<object, { names: string[]; sections: Array<[number, Section]>; cells: Array<SurfaceCell | null> }>()
   readonly chunks = new Map<string, WorldColumn>()
   worldError: string | null = null
   private worker: Worker | null = null
@@ -52,6 +57,8 @@ export class ChunkWorld {
   constructor (readonly radius = 4, private version = '1.26.60') {}
 
   clearChunks () {
+    this.flushSurfaceChanges(Infinity)
+    this.dirtySurface.clear()
     this.generation++
     const worker = this.worker
     this.worker = null
@@ -98,12 +105,14 @@ export class ChunkWorld {
           if (request.id !== message.id) continue
           column.requests.delete(y)
           if (message.type === 'error') {
+            this.flushSurfaceColumn(column)
             column.sections.delete(y)
             this.worldError = message.error
           } else {
             const data = message.data as Uint32Array
             for (const [index, stateId] of request.updates) data[index] = stateId
             column.sections.set(y, { data })
+            this.dirtySurface.add(column)
             this.revision++
           }
           return
@@ -113,6 +122,7 @@ export class ChunkWorld {
     })
     worker.on('error', error => {
       if (this.worker !== worker) return
+      this.flushSurfaceChanges(Infinity)
       this.worldError = 'Chunk worker: ' + error.message
       this.blocks = null
       this.jobs.clear()
@@ -121,6 +131,7 @@ export class ChunkWorld {
     })
     worker.on('exit', code => {
       if (this.worker === worker && code !== 0) {
+        this.flushSurfaceChanges(Infinity)
         this.worldError = 'Chunk worker exited: ' + code
         this.blocks = null
         this.jobs.clear()
@@ -134,6 +145,7 @@ export class ChunkWorld {
   setCenter (position: Position) {
     this.center = { x: Math.floor(position.x / 16), z: Math.floor(position.z / 16) }
     for (const [key, column] of this.chunks) if (!this.inRange(column.x, column.z)) {
+      this.flushSurfaceColumn(column)
       this.chunks.delete(key)
       this.revision++
     }
@@ -155,6 +167,7 @@ export class ChunkWorld {
       column.announced = true; column.attempts.clear(); this.revision++
     } else if (!packet.client_biome_update) {
       const column = this.chunks.get(key)!
+      this.flushSurfaceColumn(column)
       column.sections.clear(); column.requests.clear(); column.attempts.clear()
       this.revision++
     }
@@ -164,11 +177,14 @@ export class ChunkWorld {
   requestSubchunks (send: (name: string, params: unknown) => void, now = Date.now()) {
     if (!this.blocks || this.worldDimension === null || !this.center) return
     // BDS may already have announced a column we previously discarded outside our cache radius.
+    let complete = true
     for (let dx = -this.radius; dx <= this.radius; dx++) for (let dz = -this.radius; dz <= this.radius; dz++) {
       if (dx * dx + dz * dz > this.radius ** 2) continue
       const x = this.center.x + dx; const z = this.center.z + dz; const key = x + ':' + z
       if (!this.chunks.has(key)) this.chunks.set(key, {x, z, announced:false, sections:new Map(), attempts:new Map(), requests:new Map()})
+      if (this.chunks.get(key)!.sections.size !== this.maxY-this.minY+1) complete = false
     }
+    if (complete) return
     let pending = 0
     for (const column of this.chunks.values()) for (const [y, request] of column.requests) {
       if ((request.phase === 'requested' && now - request.at > 5000) ||
@@ -203,6 +219,7 @@ export class ChunkWorld {
       if (packet.cache_enabled) { column.requests.delete(y); this.worldError = 'Cached subchunks are unsupported'; continue }
       if (entry.result === 'success_all_air' || entry.result === 6) {
         column.sections.set(y, { data: null }); column.requests.delete(y); this.revision++
+        this.dirtySurface.add(column)
       } else if ((entry.result === 'success' || entry.result === 1) && entry.payload?.length && entry.payload.length <= 1024 * 1024 && this.jobs.size < 32) {
         request.phase = 'decoding'
         const payload = Uint8Array.from(entry.payload)
@@ -223,6 +240,7 @@ export class ChunkWorld {
     if (!column || y < this.minY || y > this.maxY) return
     const stateId = this.runtime.get(runtimeId >>> 0)
     if (stateId === undefined) {
+      this.flushSurfaceColumn(column)
       column.sections.delete(y)
       const request = column.requests.get(y)
       if (request) column.requests.delete(y)
@@ -235,9 +253,11 @@ export class ChunkWorld {
     if (request?.phase === 'decoding') request.updates.set(index, stateId)
     const section = column.sections.get(y)
     if (!section) return
+    if ((section.data?.[index] ?? this.air) === stateId) return
     const data = section.data ? section.data.slice() : new Uint32Array(8192).fill(this.air)
     data[index] = stateId
     column.sections.set(y, { data })
+    this.dirtySurface.add(column)
     this.revision++
   }
 
@@ -263,6 +283,49 @@ export class ChunkWorld {
 
   get worldRevision () { return this.revision }
   get worldSession () { return this.generation }
+
+  flushSurfaceChanges (limit = 2) {
+    if (!this.onSurfaceTile) { this.dirtySurface.clear(); return }
+    for (const column of this.dirtySurface) {
+      if (limit-- <= 0) break
+      this.flushSurfaceColumn(column)
+    }
+  }
+
+  private flushSurfaceColumn (column: WorldColumn) {
+    if (!this.dirtySurface.delete(column) || !this.onSurfaceTile || this.worldDimension === null) return
+    this.onSurfaceTile({ x: column.x, z: column.z, dimension: this.worldDimension, cells: this.surfaceCells(column) })
+  }
+
+  private surfaceCells (column: Pick<WorldColumn, 'sections'>): Array<SurfaceCell | null> {
+    const cached = this.surfaceCache.get(column)
+    if (cached?.names === this.stateNames && cached.sections.length === column.sections.size &&
+      cached.sections.every(([y, section]) => column.sections.get(y) === section)) return cached.cells
+    const cells: Array<SurfaceCell | null> = Array(256).fill(null)
+    for (let z = 0; z < 16; z++) for (let x = 0; x < 16; x++) {
+      let confirmed = true; let name = 'minecraft:air'; let height: number | null = null
+      scan: for (let y = this.maxY; y >= this.minY; y--) {
+        const section = column.sections.get(y)
+        if (!section) { confirmed = false; continue }
+        if (!section.data) continue
+        for (let localY = 15; localY >= 0; localY--) {
+          const i = (x << 8) | (localY << 4) | z
+          const state = section.data[i] !== this.air ? section.data[i] : section.data[4096 + i]
+          if (state === this.air) continue
+          name = this.stateNames[state]; height = y * 16 + localY; break scan
+        }
+      }
+      if (height !== null || confirmed) cells[z * 16 + x] = [name, height, confirmed]
+    }
+    this.surfaceCache.set(column, { names: this.stateNames, sections: [...column.sections], cells })
+    return cells
+  }
+
+  surfaceObservation (x: number, z: number, dimension: number) {
+    if (!this.blocks || dimension !== this.worldDimension) return null
+    const column = this.chunks.get(x + ':' + z)
+    return column ? this.surfaceCells(column) : null
+  }
 
   private collisionAt (x: number, y: number, z: number): CollisionCell | null {
     if (!this.blocks) return null
@@ -297,36 +360,25 @@ export class ChunkWorld {
     const cells: SurfaceMap['cells'] = Array(width * width).fill(null)
     // Block updates replace section arrays, so this snapshot stays consistent while yielding.
     const columns = [...this.chunks.values()].map(column => ({ x: column.x, z: column.z, sections: new Map(column.sections) }))
-    const names = this.stateNames; const air = this.air; const minY = this.minY; const maxY = this.maxY
     const result: SurfaceMap = { x, z, width, height: width, dimension: this.worldDimension, palette, cells, coverage: this.coverage(), stale: false }
     this.mapping = true
     try {
-      for (const column of columns) for (let localZ = 0; localZ < 16; localZ++) {
-        await yieldLoop()
-        if (signal?.aborted) throw new WorldError('Map cancelled', 499)
+      for (const column of columns) {
         if (generation !== this.generation) throw new WorldError('World changed; reload map', 409)
-        for (let localX = 0; localX < 16; localX++) {
-          let confirmed = true; let name = 'minecraft:air'; let height: number | null = null
-          scan: for (let sectionY = maxY; sectionY >= minY; sectionY--) {
-            const section = column.sections.get(sectionY)
-            if (!section) { confirmed = false; continue }
-            if (!section.data) continue
-            for (let localY = 15; localY >= 0; localY--) {
-              const i = (localX << 8) | (localY << 4) | localZ
-              const a = section.data[i]; const b = section.data[4096 + i]
-              const state = a !== air ? a : b
-              if (state === air) continue
-              name = names[state]
-              height = sectionY * 16 + localY
-              break scan
-            }
+        const surface = this.surfaceCells(column)
+        for (let localZ = 0; localZ < 16; localZ++) {
+          await yieldLoop()
+          if (signal?.aborted) throw new WorldError('Map cancelled', 499)
+          if (generation !== this.generation) throw new WorldError('World changed; reload map', 409)
+          for (let localX = 0; localX < 16; localX++) {
+            const cell = surface[localZ * 16 + localX]
+            if (!cell) continue
+            const [name, height, confirmed] = cell
+            let index = indices.get(name)
+            if (index === undefined) { index = palette.length; indices.set(name, index); palette.push(name) }
+            const offset = (column.z * 16 + localZ - z) * width + column.x * 16 + localX - x
+            cells[offset] = [index, height, confirmed]
           }
-          // Without a known block or complete air column, there is no surface to display.
-          if (height === null && !confirmed) continue
-          let index = indices.get(name)
-          if (index === undefined) { index = palette.length; indices.set(name, index); palette.push(name) }
-          const offset = (column.z * 16 + localZ - z) * width + column.x * 16 + localX - x
-          cells[offset] = [index, height, confirmed]
         }
       }
       result.stale = revision !== this.revision || center.x !== this.center?.x || center.z !== this.center?.z

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { readConfig } from './config.js'
 import { BotController } from './bot.js'
 import { createWebServer } from './web.js'
+import { MapArchive } from './map-archive.js'
 
 const config = readConfig()
 try { console.log('BDS operator key pin (SHA-256): ' + readFileSync('./data/server-key.sha256', 'utf8').trim()) }
@@ -19,11 +20,17 @@ const bot = new BotController(config, options => {
   }
   return createClient(clientOptions)
 }, () => web.broadcast())
-const web = createWebServer(bot)
+const archive = new MapArchive('./data/maps', JSON.stringify([config.host.toLowerCase(), config.port, config.transport]), config.mapWorldId)
+bot.state.onSurfaceTile = tile => archive.observe(tile)
+const mapTimer = setInterval(() => { void archive.flush().catch(error => console.error('Map persistence:', error)) }, 5000)
+mapTimer.unref()
+const web = createWebServer(bot, archive)
 web.server.on('error', error => {
   console.error(error)
   bot.stop()
   web.close()
+  clearInterval(mapTimer)
+  void archive.flush().catch(error => console.error('Map persistence:', error))
   process.exitCode = 1
 })
 web.server.listen(config.webPort, config.webHost, () => {
@@ -31,9 +38,12 @@ web.server.listen(config.webPort, config.webHost, () => {
   const address = web.server.address()
   console.log(`MC Bot web listening on ${config.webHost}:${typeof address === 'object' && address ? address.port : config.webPort}; manual connect required`)
 })
-function shutdown () {
+async function shutdown () {
   bot.stop()
   web.close()
+  clearInterval(mapTimer)
+  try { await archive.flush() }
+  catch (error) { console.error('Map persistence:', error); process.exitCode = 1 }
   setTimeout(() => process.exit(process.exitCode ? Number(process.exitCode) : 0), 5000).unref()
 }
 process.once('SIGTERM', shutdown)

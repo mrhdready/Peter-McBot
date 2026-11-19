@@ -20,15 +20,18 @@ test('Arcane preparation requires explicit server configuration and preserves co
   assert.match(missing.stderr,/BEDROCK_HOST is required/)
   assert.equal(fs.existsSync(path.join(root,'deploy/arcane')),false)
   const configured=spawnSync(process.execPath,['scripts/prepare-arcane.cjs'],{cwd:root,encoding:'utf8',env:{...env,
-    BEDROCK_HOST:'192.0.2.10',BEDROCK_PORT:'19133',BEDROCK_VERSION:'1.26.60',BEDROCK_ICE_HOST:'192.0.2.20',BOT_NAME:'PublicTest',CHUNK_RADIUS:'5'}})
+    BEDROCK_HOST:'192.0.2.10',BEDROCK_PORT:'19133',BEDROCK_VERSION:'1.26.60',BEDROCK_ICE_HOST:'192.0.2.20',BOT_NAME:'PublicTest',CHUNK_RADIUS:'5',MAP_WORLD_ID:'public_world_2'}})
   assert.equal(configured.status,0,configured.stderr)
   const compose=JSON.parse(fs.readFileSync(path.join(root,'deploy/arcane/compose.yaml'),'utf8'))
   assert.deepEqual(compose.services.bot.environment,{
     BEDROCK_HOST:'192.0.2.10',BEDROCK_PORT:'19133',BEDROCK_VERSION:'1.26.60',BEDROCK_TRANSPORT:'nethernet',
-    BEDROCK_ICE_HOST:'192.0.2.20',BOT_NAME:'PublicTest',CHUNK_RADIUS:'5',WEB_HOST:'0.0.0.0',WEB_PORT:'3000'
+    BEDROCK_ICE_HOST:'192.0.2.20',BOT_NAME:'PublicTest',CHUNK_RADIUS:'5',MAP_WORLD_ID:'public_world_2',WEB_HOST:'0.0.0.0',WEB_PORT:'3000'
   })
   assert.equal(compose.services.bot.cpus,.5)
   assert.equal(compose.services.bot.mem_limit,'256m')
+  assert.deepEqual(compose.services.bot.healthcheck.test,['CMD','node','dist/healthcheck.js'])
+  assert.ok(fs.existsSync(path.join(root,'deploy/arcane/src/healthcheck.ts')))
+  assert.ok(fs.existsSync(path.join(root,'deploy/arcane/src/map-archive.ts')))
   assert.ok(fs.existsSync(path.join(root,'deploy/arcane/src/main.ts')))
   assert.equal(fs.existsSync(path.join(root,'deploy/arcane/.env')),false)
   assert.equal(fs.existsSync(path.join(root,'deploy/arcane/config')),false)

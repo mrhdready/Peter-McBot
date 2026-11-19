@@ -7,7 +7,7 @@ Minecraft-Bedrock-Bot mit Websteuerung für einen vorhandenen Server. TypeScript
 - AFK-Verbindung über HTTP-NetherNet; manuelles Verbinden und Trennen, Login-Timeout und begrenzte Wiederverbindung. Keine automatische Verbindung beim Prozessstart.
 - Zentraler Welt-State und 20-Hz-Herzschlag; Chunkdecodierung im Worker. Bekannte und unbekannte Weltdaten bleiben unterscheidbar.
 - Blocksuche mit Registry-Autovervollständigung, X/Y/Z-Koordinaten und anklickbaren Kartenmarkern.
-- Draufsicht mit Botposition, X/Z-Zielauswahl per Klick oder Tastatur, Wegvorschau ohne Bewegung und laufender Restweg-Anzeige.
+- Persistente Draufsicht mit Botposition, leichtem historischem Nebel und Übersicht bis 448 × 448 Blöcke. X/Z-Zielauswahl per Klick oder Tastatur, Wegvorschau ohne Bewegung und laufende Restweg-Anzeige.
 - Langsame Navigation über Vollblöcke, Halbstufen und richtungsabhängige Treppen. Sprünge auf einen Block Höhe und Abstiege bis einen Block. Erst der Start-Button bewegt den Bot.
 - Fehlende Chunkspalten werden nachgeladen; neue Weltdaten, Chunkwechsel und Ankunft aktualisieren die Karte.
 
@@ -72,6 +72,16 @@ pnpm prepare:arcane
 
 Dieser Befehl liest `config/arcane.env` und erzeugt das ignorierte Verzeichnis `deploy/arcane/`. Es enthält aufgelöste Verbindungsangaben und darf nicht veröffentlicht werden. Den Ordner gezielt über die eigene Arcane-Installation bereitstellen. Der Webport wird dort zugeteilt. Ressourcenlimits: Bot 0,5 CPU / 256 MiB, Testservice 0,25 CPU / 128 MiB. Weder die Paketvorbereitung noch die Tests starten automatisch ein Deployment.
 
+## Persistente Karte und Performance
+
+Alle geladenen Oberflächen werden auch ohne Dashboard unter `data/maps/` gespeichert. Die Zuordnung erfolgt nach Serveradresse, `MAP_WORLD_ID` und Dimension. **Beim Weltreset oder Ersetzen der Welt `MAP_WORLD_ID` ändern**, damit alte und neue Oberflächen getrennt bleiben. Docker erhält die Daten im vorhandenen Volume. Speicherung erfolgt ungefähr alle fünf Sekunden und beim regulären Beenden; bei Absturz kann das letzte Intervall verloren gehen. Es gibt keine automatische Löschung.
+
+Historische Flächen erhalten einen leichten hellen Nebel mit 16 % Deckkraft. Die Karte startet mit 112 × 112 Blöcken und lässt sich bis 448 × 448 Blöcke erweitern. Ziehen verschiebt, Mausrad und +/− zoomen, „Zum Bot“ aktiviert die Verfolgung. Unbekannte Daten bleiben unbekannt; Navigation, Vorschau und Blocksuche verwenden ausschließlich aktuelle Weltdaten.
+
+Pixelpuffer, gecachte Blockfarben, getrennte Gelände-/Overlay-Ebenen und gebündelte Mausereignisse vermeiden unnötige Zeichenarbeit. Kachelfingerabdrücke und `If-None-Match` verhindern unveränderte Übertragungen. Vollständig unbekannte Kacheln werden ohne separaten Datenabruf übersprungen. Der Container-Healthcheck verwendet `node:http` bei unverändertem Prüftakt.
+
+`/?measure=1` öffnet den zuschaltbaren Messmodus; die Messschleife startet erst per Schaltfläche. Details: [Karte](docs/KARTE.md), [Performancewerte und Grenzen](docs/KARTENPERFORMANCE.md).
+
 ## GitHub Actions und GHCR
 
 `.github/workflows/docker-build.yml` verwendet das vorhandene Dockerfile auf einem GitHub-gehosteten Ubuntu-24.04-Runner:
@@ -100,7 +110,7 @@ Nach Commit und Push des Repositories wird der Workflow wirksam. Ein tatsächlic
 
 ## Prüfungen
 
-`pnpm test` baut TypeScript und führt `node:test`-Tests aus. Sie decken Transport, Weltmodell, Vorschau, Bewegung und Websteuerung ab. Die bereinigte Kopie wurde mit TypeScript-Build und 51 bestandenen Tests geprüft, einschließlich der Deployment-Konfiguration.
+`pnpm test` baut TypeScript und führt `node:test`-Tests aus. Sie decken Transport, Weltmodell, Vorschau, Bewegung und Websteuerung ab. Die bereinigte Kopie wurde mit TypeScript-Build und 61 bestandenen Tests geprüft, einschließlich der Deployment-Konfiguration.
 
 ```sh
 pnpm check:compatibility
@@ -119,6 +129,8 @@ Unbekannte oder gefährliche Flächen sind nicht begehbar. Keine Lückensprünge
 ## Weitere Dokumentation
 
 - [Architektur und Schnittstellen](docs/ARCHITEKTUR.md)
+- [Persistente Karte, Nebel und Übersicht](docs/KARTE.md)
+- [Kartenperformance und Messmodus](docs/KARTENPERFORMANCE.md)
 - [Kompatibilität und Paketpatches](docs/KOMPATIBILITAET.md)
 - [Veröffentlichungsumfang und Lizenzstatus](docs/VEROEFFENTLICHUNG.md)
 - [Contributor Guide](AGENTS.md)

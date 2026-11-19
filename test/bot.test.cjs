@@ -137,6 +137,8 @@ test('zero health stops the bot without an automatic respawn', () => {
 test('configuration rejects invalid input', () => {
   assert.throws(() => readConfig({}), /BEDROCK_HOST/)
   assert.throws(() => readConfig({ BEDROCK_HOST: 'localhost', BEDROCK_PORT: 'NaN' }), /BEDROCK_PORT/)
+  assert.throws(() => readConfig({ BEDROCK_HOST: 'localhost', MAP_WORLD_ID: '../world' }), /MAP_WORLD_ID/)
+  assert.equal(readConfig({ BEDROCK_HOST: 'localhost', MAP_WORLD_ID: 'farm_2' }).mapWorldId, 'farm_2')
   assert.throws(() => readConfig({ BEDROCK_HOST: 'localhost', CHUNK_RADIUS: '3' }), /CHUNK_RADIUS/)
   assert.throws(() => readConfig({ BEDROCK_HOST: 'localhost', BEDROCK_TRANSPORT: 'http' }), /TRANSPORT/)
   assert.throws(() => readConfig({ BEDROCK_HOST: 'localhost', BEDROCK_ICE_HOST: 'not-an-ip' }), /ICE_HOST/)

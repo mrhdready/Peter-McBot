@@ -17,6 +17,15 @@ test('HTTP queues commands, validates requests, and streams state using SSE', as
   assert.match(page, /list="block-ids"/)
   assert.match(page, /<datalist id="block-ids">/)
   assert.match(page, /<canvas id="map"/)
+  assert.doesNotMatch(page, /id="measure-map"/)
+  const measurementPage = await fetch(base + '/?measure=1').then(r => r.text())
+  for (const script of measurementPage.matchAll(/<script>([\s\S]*?)<\/script>/g)) new (require('node:vm').Script)(script[1])
+  assert.match(measurementPage, /id="measure-map"/)
+  const metrics = await fetch(base + '/api/map-performance').then(r => r.json())
+  assert.ok(metrics.process.memory.rss > 0)
+  assert.ok(metrics.process.cpu.user >= 0 && metrics.process.cpu.system >= 0)
+  assert.ok(metrics.monotonicMs > 0)
+  assert.ok(metrics.container.cpuUsageUsec === null || metrics.container.cpuUsageUsec >= 0)
   assert.equal((await fetch(base + '/api/map')).status, 409)
   assert.deepEqual(await fetch(base + '/api/block-ids').then(r => r.json()), { blockIds: [] })
   assert.equal((await fetch(base + '/api/status').then(r => r.json())).status, 'disconnected')
@@ -96,6 +105,7 @@ test('map markers select underground hits, survive map refresh and discard obsol
   const rectangles = []
   const strokes = []; let points = []
   const context = new Proxy({}, { get (target,key) {
+    if(key==='createImageData')return (width,height)=>({width,height,data:new Uint8ClampedArray(width*height*4)})
     if(key==='arc')return (...args)=>arcs.push({args,color:context.fillStyle})
     if(key==='strokeRect')return (...args)=>rectangles.push({args,color:context.strokeStyle})
     if(key==='beginPath')return ()=>{points=[]}
@@ -127,6 +137,7 @@ test('map markers select underground hits, survive map refresh and discard obsol
   const browser = vm.createContext({
     document: { getElementById: byId, createElement: element },
     Date: Clock, AbortController, URLSearchParams, setTimeout, clearTimeout,
+    requestAnimationFrame: callback => { callback(); return null },
     EventSource: class { constructor () { events = this } },
     fetch: async (url, options) => {
       requests.push({ url, options })

@@ -4,6 +4,8 @@ const root = path.resolve(__dirname, '..')
 const target = path.join(root, 'deploy/arcane')
 const host = process.env.BEDROCK_HOST
 if (!host) throw new Error('BEDROCK_HOST is required; load config/arcane.env with node --env-file')
+const mapWorldId = process.env.MAP_WORLD_ID || 'default'
+if (!/^[a-zA-Z0-9_-]{1,80}$/.test(mapWorldId)) throw new Error('Invalid MAP_WORLD_ID')
 const botName = process.env.BOT_NAME || 'MCBot'
 if (!/^[a-zA-Z0-9.:-]+$/.test(host)) throw new Error('Invalid BEDROCK_HOST')
 if (!/^[a-zA-Z0-9_ ]{1,16}$/.test(botName)) throw new Error('Invalid BOT_NAME')
@@ -26,12 +28,12 @@ const compose = {
       environment: {
         BEDROCK_HOST: host, BEDROCK_PORT: process.env.BEDROCK_PORT || '19132', BEDROCK_VERSION: process.env.BEDROCK_VERSION || '1.26.60',
         BEDROCK_TRANSPORT: 'nethernet', BEDROCK_ICE_HOST: process.env.BEDROCK_ICE_HOST || host,
-        BOT_NAME: botName, CHUNK_RADIUS: process.env.CHUNK_RADIUS || '4',
+        BOT_NAME: botName, CHUNK_RADIUS: process.env.CHUNK_RADIUS || '4', MAP_WORLD_ID: mapWorldId,
         WEB_HOST: '0.0.0.0', WEB_PORT: '3000'
       },
       volumes: [{ type: 'volume', source: 'bot-identity', target: '/app/data' }],
       healthcheck: {
-        test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"],
+        test: ['CMD', 'node', 'dist/healthcheck.js'],
         interval: '5s', timeout: '3s', retries: 12
       }
     },

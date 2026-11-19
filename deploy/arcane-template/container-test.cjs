@@ -62,6 +62,34 @@ async function main () {
   assert.equal(map.cells.length, map.width * map.height)
   assert.ok(map.cells.some(cell => cell && Number.isInteger(cell[1])), 'Expected known terrain on the map')
   assert.ok(map.cells.every(cell => cell === null || typeof map.palette[cell[0]] === 'string'))
+  assert.match(page, /const archiveEnabled = true;/)
+  assert.match(page, /id="map-ground"/)
+  const sampleIndex = map.cells.findIndex(cell => cell && Number.isInteger(cell[1]))
+  const tileX = Math.floor((map.x + sampleIndex % map.width) / 16)
+  const tileZ = Math.floor((map.z + Math.floor(sampleIndex / map.width)) / 16)
+  const tileQuery = `dimension=${map.dimension}&x=${tileX}&z=${tileZ}`
+  const manifestResponse = await fetch(base + '/api/map/tiles?' + tileQuery + '&width=1&height=1', { signal: deadline })
+  assert.equal(manifestResponse.status, 200)
+  const manifest = await manifestResponse.json()
+  assert.equal(manifest.tiles.length, 1)
+  assert.equal(manifest.tiles[0].cells, undefined)
+  const tileUrl = base + '/api/map/tile?' + tileQuery
+  let tileResponse = await fetch(tileUrl, { signal: deadline })
+  assert.equal(tileResponse.status, 200)
+  const surfaceTile = await tileResponse.clone().json()
+  assert.equal(surfaceTile.cells.length, 256)
+  assert.ok(surfaceTile.cells.some(Boolean))
+  let conditionalStatus = 200
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const conditional = await fetch(tileUrl, { signal: deadline, headers: { 'If-None-Match': tileResponse.headers.get('etag') } })
+    conditionalStatus = conditional.status
+    if (conditionalStatus === 304) { assert.equal(await conditional.text(), ''); break }
+    assert.equal(conditionalStatus, 200)
+    await conditional.clone().json()
+    tileResponse = conditional
+    await wait(250)
+  }
+  assert.equal(conditionalStatus, 304, 'Expected a stable tile to return HTTP 304')
   const searchResponse = await fetch(base + '/api/blocks?block=minecraft:stone&limit=5', { signal: deadline })
   assert.equal(searchResponse.status, 200)
   const search = await searchResponse.json()
@@ -82,12 +110,17 @@ async function main () {
   await command('disconnect')
   await wait(500)
   assert.equal((await status()).status, 'disconnected')
+  const historicalResponse = await fetch(tileUrl, { signal: deadline })
+  assert.equal(historicalResponse.status, 200)
+  const historical = await historicalResponse.json()
+  assert.ok(historical.cells.some(Boolean), 'Disconnect lost the observed surface')
+  assert.ok(historical.live.every(value => value === false), 'Disconnected cells must be historical')
   // Leave the validated container connected for the user's manual endurance test.
   await command('connect')
   const final = await waitForSpawn()
   console.log(JSON.stringify({
     result: 'passed', health: true, web: true, sse: true,
-    heartbeat: true, blockSearch: true, blockIds: blockIds.length, map: true, previewWithoutMovement:true, terrainTests: true, coverage: search.coverage, sampleHit: search.hits[0],
+    heartbeat: true, blockSearch: true, blockIds: blockIds.length, map: true, tiledMap: true, conditionalTile304: true, historicalAfterDisconnect: true, previewWithoutMovement:true, terrainTests: true, coverage: search.coverage, sampleHit: search.hits[0],
     disconnect: true, reconnect: true, leftConnected: true,
     position: final.position, dimension: final.dimension
   }))

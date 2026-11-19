@@ -10,6 +10,7 @@ services:
       BEDROCK_TRANSPORT: ${BEDROCK_TRANSPORT:-nethernet}
       BEDROCK_ICE_HOST: ${BEDROCK_ICE_HOST:-}
       BOT_NAME: ${BOT_NAME:-MCBot}
+      MAP_WORLD_ID: ${MAP_WORLD_ID:-default}
       CHUNK_RADIUS: ${CHUNK_RADIUS:-4}
       WEB_HOST: 0.0.0.0
       WEB_PORT: 3000
