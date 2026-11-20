@@ -2,7 +2,7 @@ import { ChunkWorld } from './world.js'
 
 export type Position = { x: number; y: number; z: number }
 export type Status = 'disconnected' | 'connecting' | 'spawned' | 'reconnecting' | 'dead' | 'error'
-export type Player = { name: string; position: Position }
+export type Player = { name: string; position: Position; uniqueId: string; uuid: string }
 export type NavigationState = {
   status: 'idle' | 'planning' | 'moving' | 'stopped' | 'arrived' | 'error';
   target: { x: number; z: number } | null; feetY: number | null;

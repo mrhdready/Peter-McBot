@@ -244,7 +244,7 @@ test('other players are tracked from add, move and remove packets and cleared wi
   // Movement of an entity that was never announced as a player is ignored.
   client.emit('move_player', { runtime_id: 30n, position: { x: 1, y: 65, z: 1 } })
   assert.deepEqual(bot.state.snapshot().players, [])
-  client.emit('add_player', { runtime_id: 20n, username: 'Alex', position: { x: 5, y: 65.62, z: -3 } })
+  client.emit('add_player', { runtime_id: 20n, unique_id: -4294967291n, uuid: 'uuid-alex', username: 'Alex', position: { x: 5, y: 65.62, z: -3 } })
   client.emit('add_player', { runtime_id: 10n, username: 'Bot', position: { x: 0, y: 64, z: 0 } })
   assert.deepEqual(bot.state.snapshot().players, [{ id: '20', name: 'Alex', x: 5, y: 65.62, z: -3 }])
   client.emit('move_player', { runtime_id: 20n, position: { x: 6, y: 65.62, z: -4 } })
@@ -254,8 +254,17 @@ test('other players are tracked from add, move and remove packets and cleared wi
   assert.equal(bot.state.position.x, 0, 'Other players never move the bot')
   client.emit('move_player', { runtime_id: 20n, position: { x: NaN, y: 65, z: 0 } })
   assert.equal(bot.state.snapshot().players[0].x, 7.5)
+  // remove_entity names the unique ID, not the runtime ID.
   client.emit('remove_entity', { entity_id_self: 20n })
-  assert.deepEqual(bot.state.snapshot().players, [])
+  assert.equal(bot.state.players.size, 1, 'A runtime ID in remove_entity is another entity')
+  client.emit('remove_entity', { entity_id_self: -4294967291n })
+  assert.deepEqual(bot.state.snapshot().players, [], 'Leaving the range removes the player')
+  // Leaving the server removes the player by UUID even without remove_entity.
+  client.emit('add_player', { runtime_id: 22n, unique_id: -4294967290n, uuid: 'uuid-bob', username: 'Bob', position: { x: 2, y: 64, z: 2 } })
+  client.emit('player_list', { records: { type: 'add', records_count: 1, records: [{ uuid: 'uuid-bob' }] } })
+  assert.equal(bot.state.players.size, 1)
+  client.emit('player_list', { records: { type: 'remove', records_count: 1, records: [{ uuid: 'uuid-bob' }] } })
+  assert.equal(bot.state.players.size, 0, 'Disconnecting removes the player')
   client.emit('add_player', { runtime_id: 21n, username: 'Steve', position: { x: 1, y: 64, z: 1 } })
   client.emit('change_dimension', { dimension: 1 })
   assert.equal(bot.state.players.size, 0, 'A dimension change clears the players')

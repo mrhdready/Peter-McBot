@@ -187,9 +187,11 @@ export class BotController {
           if (packet.mode === 'teleport' || packet.mode === 'reset' || packet.mode === 1 || packet.mode === 2) this.navigator.acknowledgeTeleport()
         } else this.movePlayer(packet.runtime_id, packet.position)
       })
-      client.on('add_player', (packet: { runtime_id: bigint | string; username: string; position: Position }) => {
+      client.on('add_player', (packet: { runtime_id: bigint | string; unique_id?: bigint | string; uuid?: string; username: string; position: Position }) => {
         const id = String(packet.runtime_id)
-        if (active() && id !== String(client.entityId) && isPosition(packet.position)) this.state.players.set(id, { name: String(packet.username ?? ''), position: { ...packet.position } })
+        if (active() && id !== String(client.entityId) && isPosition(packet.position)) {
+          this.state.players.set(id, { name: String(packet.username ?? ''), position: { ...packet.position }, uniqueId: String(packet.unique_id ?? id), uuid: String(packet.uuid ?? '') })
+        }
       })
       // Delta packets carry only the changed absolute coordinates.
       client.on('move_entity_delta', (packet: { runtime_entity_id: bigint | string; x?: number; y?: number; z?: number }) => {
@@ -201,8 +203,17 @@ export class BotController {
           z: Number.isFinite(packet.z) ? packet.z! : player.position.z
         })
       })
+      // remove_entity carries the unique entity ID, which differs from the runtime ID on BDS.
       client.on('remove_entity', (packet: { entity_id_self: bigint | string }) => {
-        if (active()) this.state.players.delete(String(packet.entity_id_self))
+        if (!active()) return
+        const uniqueId = String(packet.entity_id_self)
+        for (const [id, player] of this.state.players) if (player.uniqueId === uniqueId) this.state.players.delete(id)
+      })
+      // A player who leaves the server is removed from the player list by UUID.
+      client.on('player_list', (packet: { records?: { type?: string; records?: { uuid?: string }[] } }) => {
+        if (!active() || packet.records?.type !== 'remove') return
+        const left = new Set((packet.records.records ?? []).map(record => String(record.uuid)))
+        for (const [id, player] of this.state.players) if (left.has(player.uuid)) this.state.players.delete(id)
       })
       client.on('server_post_move', (packet: { position: Position }) => {
         if (active()) this.updatePosition(packet.position)
