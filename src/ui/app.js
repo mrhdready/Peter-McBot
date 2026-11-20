@@ -204,6 +204,12 @@ function selectMapHits (x, z) {
   }
 }
 function blockColor (id) {
+  const name = id.replace(/^minecraft:/, '');
+  const dye = name.match(dyePattern);
+  if (dye && /wool|carpet|concrete|glass|terracotta|shulker|candle|bed$|banner/.test(name)) return dyeColors[dye[1]];
+  const base = name.replace(/_(stairs|double_slab|slab|wall|fence_gate|fence|trapdoor|door|pressure_plate|button)$/, '');
+  const known = blockColors[name] || blockColors[base] || blockColors[base + 's'] || blockColors[base + '_planks'];
+  if (known) return known;
   if (/water/.test(id)) return '#397bb8';
   if (/lava|magma/.test(id)) return '#e96325';
   if (/snow|ice|quartz/.test(id)) return '#dcebf0';
@@ -217,6 +223,46 @@ function blockColor (id) {
   if (id === 'minecraft:air') return '#334155';
   let hash = 0; for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) | 0;
   return 'hsl(' + ((hash >>> 0) % 360) + ' 35% 55%)';
+}
+// Colors follow the vanilla map palette at its flat shade, slightly muted; patterns above stay as fallback.
+const dyePattern = /^(light_blue|light_gray|white|orange|magenta|yellow|lime|pink|gray|cyan|purple|blue|brown|green|red|black)_/;
+const dyeColors = {
+  white:'#dcdcdc', orange:'#ba6d2c', magenta:'#9941ba', light_blue:'#5884ba', yellow:'#c5c52c', lime:'#6daf15', pink:'#d06d8e', gray:'#414141',
+  light_gray:'#848484', cyan:'#416d84', purple:'#6d3699', blue:'#2c4199', brown:'#58412c', green:'#586d2c', red:'#832c2c', black:'#151515'
+};
+const blockColors = {
+  grass_block:'#6d9930', grass:'#6d9930', grass_path:'#94795a', dirt_path:'#94795a', dirt:'#825e42', coarse_dirt:'#825e42', rooted_dirt:'#825e42',
+  farmland:'#6f4e36', podzol:'#6f4a2a', mycelium:'#6d5a6e', mud:'#4c4545', clay:'#8d909e', moss_block:'#4e6b28', moss_carpet:'#4e6b28',
+  sand:'#d5c88c', sandstone:'#d5c88c', smooth_sandstone:'#d5c88c', cut_sandstone:'#d5c88c', red_sand:'#ba6d2c', red_sandstone:'#ba6d2c', gravel:'#7f7d7c',
+  stone:'#606060', cobblestone:'#606060', stone_bricks:'#606060', stone_brick:'#606060', smooth_stone:'#606060', mossy_cobblestone:'#5c6b4c',
+  andesite:'#6e6e6e', diorite:'#bdbdb8', granite:'#8a6252', deepslate:'#565656', cobbled_deepslate:'#565656', tuff:'#6b6d64', calcite:'#d6d3cd',
+  dripstone_block:'#7a5a47', bedrock:'#4a4a4a', obsidian:'#1c1828', bricks:'#833d2c', brick_block:'#833d2c', quartz_block:'#dbd8d2', glass:'#bcd7dc',
+  snow:'#f2f6f8', snow_layer:'#f2f6f8', powder_snow:'#f2f6f8', ice:'#8a8adb', packed_ice:'#8a8adb', blue_ice:'#7a86db',
+  water:'#397bb8', flowing_water:'#397bb8', lava:'#e96325', flowing_lava:'#e96325', magma:'#8a3a12',
+  netherrack:'#7a2e2a', nether_brick:'#4a1e22', soul_sand:'#55402f', soul_soil:'#55402f', crimson_nylium:'#a22a2a', warped_nylium:'#13706f',
+  basalt:'#3e3e44', blackstone:'#2b2529', glowstone:'#d7cc6a', end_stone:'#d5d59a', purpur_block:'#9a6d9a',
+  oak_leaves:'#2f6a1f', spruce_leaves:'#3a5a3a', birch_leaves:'#59803a', jungle_leaves:'#2f7a1c', acacia_leaves:'#3f7a24', dark_oak_leaves:'#2a5a1a',
+  mangrove_leaves:'#3d6e22', cherry_leaves:'#e3a9b9', azalea_leaves:'#4e7a30', azalea_leaves_flowered:'#6e7a50', leaves:'#2f6a1f', leaves2:'#3f7a24',
+  short_grass:'#3f8a2a', tallgrass:'#3f8a2a', tall_grass:'#3f8a2a', fern:'#3f8a2a', large_fern:'#3f8a2a', vine:'#2f6a1f', waterlily:'#2f7a1c',
+  oak_planks:'#7b6640', spruce_planks:'#6b4a2a', birch_planks:'#c3b07b', jungle_planks:'#8a6142', acacia_planks:'#a95a2e', dark_oak_planks:'#4a311b',
+  mangrove_planks:'#6e2a24', cherry_planks:'#d9b4ae', crimson_planks:'#7d3a52', warped_planks:'#2a6d66', bamboo_planks:'#c0ac58', planks:'#7b6640',
+  oak_log:'#6a5232', spruce_log:'#3e2b17', birch_log:'#d5d0c4', jungle_log:'#5a4628', acacia_log:'#5e5850', dark_oak_log:'#3a2a16', mangrove_log:'#5a3a2a',
+  cherry_log:'#3a2128', crimson_stem:'#5c1a2e', warped_stem:'#3a2a40',
+  cactus:'#2f6e20', pumpkin:'#ba6d2c', melon_block:'#6e8a2c', hay_block:'#c5a52c', reeds:'#6e9a4a', sugar_cane:'#6e9a4a', bamboo:'#5e8a2a',
+  coal_block:'#151515', iron_block:'#a8a8a8', gold_block:'#d7cd42', diamond_block:'#4fbcb7', emerald_block:'#00ba32', lapis_block:'#3f6edb',
+  redstone_block:'#a00000', copper_block:'#b0603f', hardened_clay:'#8a4e3a', terracotta:'#8a4e3a', bone_block:'#d6d0b4'
+};
+const heightRanges = [[-64,320],[0,128],[0,256]];
+// Relative brightness from absolute height (tint) and the step to the northern neighbour (relief, like vanilla maps).
+function shade (cell, north, dimension, palette) {
+  if (cell[1] === null || /water|lava/.test(palette ? palette[cell[0]] : cell[0])) return 1;
+  const [low, high] = heightRanges[dimension] || heightRanges[0];
+  let factor = 1 + Math.max(-1, Math.min(1, (cell[1] - (low + high) / 2) / ((high - low) / 2))) * .1;
+  if (cell[2] && north && north[2] && north[1] !== null) {
+    const step = cell[1] - north[1];
+    factor += step >= 3 ? .12 : step > 0 ? .08 : step <= -3 ? -.2 : step < 0 ? -.08 : 0;
+  }
+  return factor;
 }
 const blockPixels = new Map();
 let colorContext = null;
@@ -239,20 +285,22 @@ function blockPixel (id) {
   blockPixels.set(id,pixel);
   return pixel;
 }
-function rasterCells (target, cells, width, palette, historical) {
+function rasterCells (target, cells, width, palette, historical, dimension, northRow) {
   const image = target.createImageData(width,cells.length/width);
   const pixels = image.data;
   for (let i=0;i<cells.length;i++) {
     const cell = cells[i];
     let color = cell ? blockPixel(palette ? palette[cell[0]] : cell[0]) : unknownPixel;
+    let factor = 1;
     if (cell && !cell[2] && (i%width+Math.floor(i/width))%2===0) color = unconfirmedPixel;
+    else if (cell) factor = shade(cell, i < width ? northRow?.[i] : cells[i-width], dimension, palette);
     const offset = i*4;
     if (cell && historical?.[i]) {
-      pixels[offset] = color[0]*.84+210*.16;
-      pixels[offset+1] = color[1]*.84+222*.16;
-      pixels[offset+2] = color[2]*.84+232*.16;
+      pixels[offset] = color[0]*factor*.84+210*.16;
+      pixels[offset+1] = color[1]*factor*.84+222*.16;
+      pixels[offset+2] = color[2]*factor*.84+232*.16;
     } else {
-      pixels[offset] = color[0]; pixels[offset+1] = color[1]; pixels[offset+2] = color[2];
+      pixels[offset] = color[0]*factor; pixels[offset+1] = color[1]*factor; pixels[offset+2] = color[2]*factor;
     }
     pixels[offset+3] = 255;
   }
@@ -264,14 +312,19 @@ function paintTerrain () {
   groundContext.fillStyle = '#202b40'; groundContext.fillRect(0, 0, map.width, map.height);
   groundContext.imageSmoothingEnabled = false;
   if (map.tiles) {
+    const visible = new Map(map.tiles.map(tile => [tile.x + ':' + tile.z, tile]));
     for (const tile of map.tiles) {
-      if (!tile.raster) {
-        tile.raster = document.createElement('canvas'); tile.raster.width = tile.raster.height = 16;
-        rasterCells(tile.raster.getContext('2d'), tile.cells, 16, null, tile.live.map(live => !live));
+      // The top row's relief depends on the northern tile, so its fingerprint is part of the raster key.
+      const north = visible.get(tile.x + ':' + (tile.z - 1));
+      const rasterKey = tile.hash + ':' + (north ? north.hash : '');
+      if (!tile.raster || tile.rasterKey !== rasterKey) {
+        if (!tile.raster) { tile.raster = document.createElement('canvas'); tile.raster.width = tile.raster.height = 16; }
+        rasterCells(tile.raster.getContext('2d'), tile.cells, 16, null, tile.live.map(live => !live), map.dimension, north ? north.cells.slice(240) : null);
+        tile.rasterKey = rasterKey;
       }
       groundContext.drawImage(tile.raster, tile.x * 16 - map.x, tile.z * 16 - map.z);
     }
-  } else rasterCells(groundContext, map.cells, map.width, map.palette);
+  } else rasterCells(groundContext, map.cells, map.width, map.palette, null, dimensionNumber(lastDimension));
   renderedTerrainKey = terrainKey;
 }
 function drawMap () {
@@ -698,7 +751,7 @@ async function loadTiles (controller) {
     const offset = localZ * viewport.size + localX;
     cells[offset] = [indices.get(cell[0]), cell[1], cell[2]]; historical[offset] = !tile.live[i];
   });
-  currentMap = {x:viewport.x, z:viewport.z, width:viewport.size, height:viewport.size, cells, historical, palette, tiles, coverage:{session:manifest.session}};
+  currentMap = {x:viewport.x, z:viewport.z, width:viewport.size, height:viewport.size, dimension, cells, historical, palette, tiles, coverage:{session:manifest.session}};
   terrainKey = JSON.stringify([dimension, viewport, tiles.map(tile => tile.hash)]);
   setMapSize(viewport.size, viewport.size);
   byId('map-status').textContent = viewport.size + ' × ' + viewport.size + ' Blöcke. Erkundete Oberflächen bleiben gespeichert; leicht vernebelte Flächen sind historisch.' + (manifest.error ? ' Speicherfehler: ' + manifest.error : '');
