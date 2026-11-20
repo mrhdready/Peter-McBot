@@ -91,7 +91,7 @@ test('the bot name prefix is case-insensitive, allows @ and a separator, and mus
   await command('ich sag Peter Bot hallo')
   await command('Peter Bot tanz')
   await command('Peter Bot')
-  assert.deepEqual(said(), ['Hallo Alex!', 'Hallo Alex!', 'Befehle: hallo, go <Wegpunkt>, come, find <Block>, stop', 'Befehle: hallo, go <Wegpunkt>, come, find <Block>, stop'])
+  assert.deepEqual(said(), ['Hallo Alex!', 'Hallo Alex!', 'Befehle: hallo, go <Wegpunkt>, come, find <Block>, inventory, give <Item> [Anzahl], stop', 'Befehle: hallo, go <Wegpunkt>, come, find <Block>, inventory, give <Item> [Anzahl], stop'])
 })
 
 test('a player gets one command per 2 s; other players are not throttled', async t => {
@@ -199,4 +199,124 @@ test('CHAT_COMMANDS defaults to on and accepts only on or off', () => {
   assert.equal(readConfig({ BEDROCK_HOST: 'localhost' }).chatCommands, true)
   assert.equal(readConfig({ BEDROCK_HOST: 'localhost', CHAT_COMMANDS: 'off' }).chatCommands, false)
   assert.throws(() => readConfig({ BEDROCK_HOST: 'localhost', CHAT_COMMANDS: 'yes' }), /CHAT_COMMANDS/)
+})
+
+const stack = (network_id, count, stack_id) => ({ network_id, count, metadata: 0, has_stack_id: true, stack_id, block_runtime_id: 0, extra: { has_nbt: false, can_place_on: [], can_destroy: [] } })
+const registry = [['dirt', 3], ['torch', 50], ['oak_log', 17], ['oak_planks', 5], ['stone', 1], ['cobblestone', 4], ['sand', 12], ['gravel', 13], ['glass', 20], ['apple', 260]]
+  .map(([name, runtime_id]) => ({ name: 'minecraft:' + name, runtime_id, component_based: false, version: 0, nbt: null }))
+const settle = () => new Promise(resolve => setImmediate(resolve))
+const lastRequest = client => client.sent.filter(([name]) => name === 'item_stack_request').at(-1)?.[1].requests[0]
+const confirm = (client, request, slots) => client.emit('item_stack_response', { responses: [{ status: 'ok', request_id: request.request_id,
+  containers: slots.map(([container_id, slot, count, item_stack_id]) => ({ slot_type: { container_id }, slots: [{ slot, hotbar_slot: slot, count, item_stack_id, custom_name: '', filtered_custom_name: '', durability_correction: 0 }] })) }] })
+
+test('inventory packets fill the item totals; drops send one request per item, apply the response and fail on rejection, timeout and disconnect', async t => {
+  const { bot, client, advance } = setup(t)
+  const inventory = bot.state.inventory
+  assert.equal(inventory.known, false)
+  client.emit('item_registry', { itemstates: registry })
+  const content = Array(36).fill({ network_id: 0, count: 0 })
+  content[0] = stack(3, 64, 7); content[12] = stack(3, 5, 8); content[3] = stack(50, 3, 9)
+  client.emit('inventory_content', { window_id: 'inventory', input: content })
+  // Armour and other windows are not part of the inventory.
+  client.emit('inventory_content', { window_id: 'armor', input: [stack(50, 1, 1)] })
+  assert.equal(inventory.known, true)
+  assert.deepEqual(inventory.items(), [{ name: 'minecraft:dirt', count: 69 }, { name: 'minecraft:torch', count: 3 }])
+  // An item missing from the registry keeps its network ID.
+  client.emit('inventory_slot', { window_id: 'inventory', slot: 4, item: stack(99, 2, 10) })
+  assert.deepEqual(inventory.items().at(-1), { name: '#99', count: 2 })
+  client.emit('inventory_slot', { window_id: 'inventory', slot: 4, item: { network_id: 0, count: 0 } })
+  // A pickup: the server sends a transaction with the slot's new item; the picked-up entity's action is ignored.
+  client.emit('inventory_transaction', { transaction: { legacy: { legacy_request_id: 0 }, transaction_type: 'normal', actions: [
+    { source_type: 'container', window_id: 0, slot: 3, old_item: stack(50, 3, 9), new_item: stack(50, 4, 12) },
+    { source_type: 'world_interaction', flags: 0, slot: 1, old_item: stack(50, 1, 0), new_item: { network_id: 0, count: 0 } }
+  ] } })
+  assert.deepEqual(inventory.items().at(-1), { name: 'minecraft:torch', count: 4 })
+  client.emit('inventory_transaction', { transaction: { transaction_type: 'normal', actions: [
+    { source_type: 'container', window_id: 0, slot: 3, old_item: stack(50, 4, 12), new_item: stack(50, 3, 13) }
+  ] } })
+  const revision = inventory.revision
+  const done = bot.dropItems('minecraft:dirt', 66, { x: 3.5, y: 72.62, z: .5 })
+  advance(50)
+  const [look, sent] = client.sent.filter(([name]) => name === 'player_auth_input' || name === 'item_stack_request').slice(-2)
+  // The bot faces the receiver (east, yaw -90) before the drop.
+  assert.equal(look[0], 'player_auth_input')
+  assert.equal(Math.round(look[1].yaw), -90)
+  assert.deepEqual(look[1].move_vector, { x: 0, z: 0 })
+  assert.equal(sent[0], 'item_stack_request')
+  const request = sent[1].requests[0]
+  assert.ok(request.request_id < 0)
+  assert.deepEqual(request.actions.map(action => [action.type_id, action.count, action.source.slot_type.container_id, action.source.slot, action.source.stack_id, action.randomly]),
+    [['drop', 64, 'hotbar', 0, 7, false], ['drop', 2, 'inventory', 12, 8, false]])
+  confirm(client, request, [['hotbar', 0, 0, 0], ['inventory', 12, 3, 11]])
+  assert.equal(await done, 66)
+  assert.ok(inventory.revision > revision)
+  assert.deepEqual(inventory.items(), [{ name: 'minecraft:dirt', count: 3 }, { name: 'minecraft:torch', count: 3 }])
+  const rejected = bot.dropItems('minecraft:torch', 1, { x: 0, y: 72.62, z: 5 })
+  advance(50)
+  client.emit('item_stack_response', { responses: [{ status: 'error', request_id: lastRequest(client).request_id }] })
+  await assert.rejects(rejected, /abgelehnt/)
+  assert.deepEqual(inventory.items().at(-1), { name: 'minecraft:torch', count: 3 }, 'A rejected drop changes nothing')
+  const unanswered = bot.dropItems('minecraft:torch', 1, { x: 0, y: 72.62, z: 5 })
+  advance(50); advance(3000)
+  await assert.rejects(unanswered, /nicht geantwortet/)
+  const lost = bot.dropItems('minecraft:torch', 1, { x: 0, y: 72.62, z: 5 })
+  bot.enqueue('disconnect'); bot.step()
+  await assert.rejects(lost, /getrennt/)
+  assert.equal(inventory.known, false)
+  assert.deepEqual(inventory.items(), [])
+  await assert.rejects(bot.dropItems('minecraft:torch', 1, { x: 0, y: 72.62, z: 5 }), /nicht verbunden/)
+})
+
+test('inventory lists item totals; give walks up, throws towards the sender and reports partial amounts and runaways', async t => {
+  const { bot, client, said, advance, command } = setup(t)
+  await command('Peter Bot inventory')
+  assert.equal(said().at(-1), 'Mein Inventar ist noch unbekannt.')
+  client.emit('item_registry', { itemstates: registry })
+  client.emit('inventory_content', { window_id: 'inventory', input: [] })
+  await command('Peter Bot inv')
+  assert.equal(said().at(-1), 'Mein Inventar ist leer.')
+  client.emit('inventory_content', { window_id: 'inventory', input: [stack(3, 12, 1), stack(50, 3, 2), stack(17, 10, 3), stack(5, 9, 4), stack(1, 8, 5),
+    stack(4, 7, 6), stack(12, 6, 7), stack(13, 5, 8), stack(20, 4, 9), stack(260, 2, 10)] })
+  await command('Peter Bot INV')
+  assert.equal(said().at(-1), 'Inventar: dirt ×12, oak_log ×10, oak_planks ×9, stone ×8, cobblestone ×7, sand ×6, gravel ×5, glass ×4 … +2 weitere')
+  await command('Peter Bot give')
+  await command('Peter Bot give diamond')
+  await command('Peter Bot give oak')
+  await command('Peter Bot give dirt 0')
+  await command('Peter Bot give minecraft:dirt')
+  assert.deepEqual(said().slice(-5), ['Was soll ich geben? give <Item> [Anzahl]', 'Ich habe kein diamond.', 'Mehrdeutig: oak_log, oak_planks',
+    'Die Anzahl muss zwischen 1 und 2304 liegen.', 'Ich sehe dich nicht, Alex.'])
+  // A sender within reach gets the items at once, all of them without a count.
+  bot.state.players.set('7', { name: 'Alex', position: { x: 1.5, y: 72.62, z: .5 }, uniqueId: '7', uuid: 'u' })
+  await command('Peter Bot give Dirt')
+  advance(50)
+  let request = lastRequest(client)
+  assert.deepEqual(request.actions.map(action => [action.count, action.source.slot]), [[12, 0]])
+  confirm(client, request, [['hotbar', 0, 0, 0]])
+  await settle()
+  assert.equal(said().at(-1), 'Hier, 12 dirt.')
+  // A sender further away is approached first; asking for more than the bot has drops what there is.
+  bot.state.players.get('7').position = { x: 6.5, y: 72.62, z: .5 }
+  await command('Peter Bot give torch 5')
+  assert.equal(said().at(-1), 'Unterwegs zu Alex (4 Blöcke).')
+  for (let i = 0; i < 400 && bot.state.navigation.status !== 'arrived'; i++) advance(50)
+  assert.equal(bot.state.navigation.status, 'arrived')
+  advance(50)
+  request = lastRequest(client)
+  assert.deepEqual(request.actions.map(action => [action.count, action.source.slot]), [[3, 1]])
+  confirm(client, request, [['hotbar', 1, 0, 0]])
+  await settle()
+  assert.equal(said().at(-1), 'Ich habe nur 3 torch, hier sind sie.')
+  assert.ok(!said().includes('Angekommen bei Alex.'), 'A give run ends with the hand-over, not an arrival line')
+  // A sender who walks away keeps nothing.
+  bot.state.players.get('7').position = { x: 9.5, y: 72.62, z: .5 }
+  await command('Peter Bot give glass 2')
+  bot.state.players.get('7').position = { x: -8.5, y: 72.62, z: .5 }
+  const requests = client.sent.filter(([name]) => name === 'item_stack_request').length
+  advance(50)
+  assert.ok(['planning', 'moving'].includes(bot.state.navigation.status))
+  for (let i = 0; i < 400 && bot.state.navigation.status !== 'arrived'; i++) advance(50)
+  advance(50)
+  assert.equal(said().at(-1), 'Du bist weggelaufen, Alex. Ich behalte die Sachen.')
+  assert.equal(client.sent.filter(([name]) => name === 'item_stack_request').length, requests)
 })

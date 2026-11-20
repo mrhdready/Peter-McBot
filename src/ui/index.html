@@ -81,6 +81,12 @@
 <ul id="player-list" class="place-list" aria-label="Spieler auf dem Server"></ul>
 <p id="player-empty" class="hint">Nicht verbunden.</p>
 </details>
+<!-- The bot's own items, read-only; chat commands "inventory" and "give" use the same data. -->
+<details class="panel">
+<summary><h2 id="inventory-heading">Inventar (0)</h2></summary>
+<ul id="inventory-list" class="place-list" aria-label="Gegenstände im Inventar des Bots"></ul>
+<p id="inventory-empty" class="hint">Inventar unbekannt (nicht verbunden).</p>
+</details>
 <!-- Read-only chat log; from 1400px it becomes a fixed left column (CSS). The script opens it except below 900px. -->
 <details class="panel chat" id="chat-panel">
 <summary><h2 id="chat-heading">Chat</h2></summary>
@@ -110,6 +116,7 @@
 <h3>Skin</h3>
 <p>Ein eigener Skin (PNG, 64×64 oder 64×32) wird beim Verbinden einmal an den Server geschickt. Nach dem Hochladen gilt er erst ab der nächsten Verbindung; „Jetzt neu verbinden“ trennt und verbindet sofort. Ob andere Spieler ihn sehen, hängt auch von der Welteinstellung „Nur vertrauenswürdige Skins“ ab.</p>
 <h3>Chat</h3>
+<p>Chat-Befehle beginnen mit dem Namen des Bots, etwa „Peter inventory“ (kurz „inv“) oder „Peter give dirt 5“. „give“ läuft zum Absender und wirft ihm das Item zu; ohne Anzahl alles davon. „Inventar“ zeigt dieselben Daten.</p>
 <p>Zeigt die letzten 100 Chatzeilen anderer Spieler, Flüstern an den Bot (kursiv) und die Antworten des Bots auf Chat-Befehle. Graue Zeilen markieren Verbinden und Trennen. Der Verlauf liegt nur im Speicher und ist nach einem Neustart des Bots leer. Aus der Oberfläche kann nicht geschrieben werden.</p>
 <h3>Blocksuche</h3>
 <p>Treffer werden mit ⛏️ markiert, auch unter der Oberfläche. „Zurücksetzen“ entfernt sie wieder. „Ziel“ in der Trefferliste übernimmt X/Z als Navigationsziel. Bei Weltänderungen erneut suchen.</p>

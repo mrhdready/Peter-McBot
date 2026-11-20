@@ -12,7 +12,7 @@ export interface BotClient extends EventEmitter {
   entityId?: unknown
 }
 /** Who asked for a navigation via chat; navigations from the web UI have none. */
-export type NavigationOrigin = { player: string; label: string }
+export type NavigationOrigin = { player: string; label: string; give?: number }
 export type Command = 'connect' | 'disconnect' | 'stop_navigation' | { type: 'navigate'; x: number; z: number; origin?: NavigationOrigin }
 export type NavigationEnd = (origin: NavigationOrigin | null, status: string, message: string | null) => void
 export type ClientFactory = (config: Config) => BotClient
@@ -21,6 +21,8 @@ export type ChatLine = { at: number; kind: 'chat' | 'whisper' | 'bot' | 'event';
 const CHAT_LOG_SIZE = 100
 const isPosition = (position: Position | undefined): position is Position =>
   Boolean(position) && [position!.x, position!.y, position!.z].every(Number.isFinite)
+const isInventoryWindow = (id: string | number | undefined) => id === 'inventory' || id === 0
+type DropJob = { name: string; count: number; toward: Position; resolve: (dropped: number) => void; reject: (error: Error) => void }
 
 export class BotController {
   readonly state: WorldState
@@ -39,6 +41,7 @@ export class BotController {
   private runOrigin: NavigationOrigin | null = null
   private chatLines: ChatLine[] = []
   private chatLogRevision = 0
+  private drops: DropJob[] = []
   /** Called for every chat or whisper line from another player. */
   onChat: (sender: string, message: string) => void = () => {}
   /** Called once when a navigation run ends: arrived, failed, stopped, replaced or lost with the connection. */
@@ -105,7 +108,15 @@ export class BotController {
     if (this.wanted && !this.client && this.now() >= this.retryAt) this.connect()
     if (this.client && this.state.status === 'spawned') {
       const send = (name: string, params: unknown) => this.client?.queue(name, params)
-      try { this.state.requestSubchunks(send, this.now()); this.navigator.step(send, this.now()) }
+      try {
+        this.state.requestSubchunks(send, this.now()); this.navigator.step(send, this.now())
+        // The bot turns towards the receiver first; the server throws dropped items in the facing direction.
+        for (const job of this.drops.splice(0)) {
+          this.navigator.face(send, job.toward)
+          this.state.inventory.drop(send, job.name, job.count, this.now()).then(job.resolve, job.reject)
+        }
+        this.state.inventory.expire(this.now())
+      }
       catch (error) { this.failed(error instanceof Error ? error.message : String(error)) }
       this.settleNavigation()
     }
@@ -262,6 +273,24 @@ export class BotController {
           this.onChat(sender, packet.message)
         }
       })
+      // Item names arrive once per login; the inventory (window 0) arrives complete after spawning and slot by slot afterwards.
+      client.on('item_registry', (packet: { itemstates?: unknown }) => { if (active()) this.state.inventory.setRegistry(packet.itemstates) })
+      client.on('inventory_content', (packet: { window_id?: string | number; input?: unknown }) => {
+        if (active() && isInventoryWindow(packet.window_id)) { this.state.inventory.setContent(packet.input); this.publishAt = 0 }
+      })
+      client.on('inventory_slot', (packet: { window_id?: string | number; slot?: number; item?: unknown }) => {
+        if (active() && isInventoryWindow(packet.window_id)) { this.state.inventory.setSlot(packet.slot, packet.item); this.publishAt = 0 }
+      })
+      // Pickups arrive as a server-sent inventory_transaction whose container action carries the slot's new item (verified live).
+      client.on('inventory_transaction', (packet: { transaction?: { actions?: { source_type?: string; window_id?: string | number; slot?: number; new_item?: unknown }[] } }) => {
+        if (!active()) return
+        for (const action of packet.transaction?.actions ?? []) {
+          if (action.source_type === 'container' && isInventoryWindow(action.window_id)) { this.state.inventory.setSlot(action.slot, action.new_item); this.publishAt = 0 }
+        }
+      })
+      client.on('item_stack_response',(packet: { responses?: unknown }) => {
+        if (active()) { this.state.inventory.response(packet.responses); this.publishAt = 0 }
+      })
       client.on('server_post_move', (packet: { position: Position }) => {
         if (active()) this.updatePosition(packet.position)
       })
@@ -311,6 +340,12 @@ export class BotController {
     })
     this.logChat('bot', this.config.username, message)
     return true
+  }
+
+  /** Drops up to `count` of an inventory item towards `toward` on the next tick; resolves with the amount the server confirmed. */
+  dropItems (name: string, count: number, toward: Position): Promise<number> {
+    if (this.stopped || !this.client || this.state.status !== 'spawned') return Promise.reject(new Error('Bot ist nicht verbunden.'))
+    return new Promise((resolve, reject) => this.drops.push({ name, count, toward: { ...toward }, resolve, reject }))
   }
 
   /** Revision of the chat log; it changes with every new line. */
@@ -365,6 +400,7 @@ export class BotController {
     if (this.state.status === 'spawned') this.logChat('event', '', 'Verbindung getrennt')
     const old = this.client
     this.client = null
+    for (const job of this.drops.splice(0)) job.reject(new Error('Verbindung getrennt.'))
     this.navigator.reset()
     this.settleNavigation()
     this.state.resetWorld()

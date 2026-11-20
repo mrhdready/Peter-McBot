@@ -209,6 +209,14 @@ export class Navigator {
         held_item: EMPTY_ITEM, player_pos: { ...p }, click_pos: click, block_runtime_id: state.runtimeId, client_prediction: 'success', client_cooldown_state: 'off' } } })
   }
 
+  /** Turns the bot towards a point with one input packet without moving it. */
+  face (send: Send, toward: Target) {
+    const p = this.world.position
+    if (!p) return
+    this.yaw = Math.atan2(-(toward.x - p.x), toward.z - p.z) * 180 / Math.PI
+    this.sendInput(send, p, { x: 0, y: -.0784, z: 0 }, 0, this.grounded)
+  }
+
   // Clicks the door once, then waits for the server's block update; a door that stays closed is avoided by a replan.
   private openDoor (send: Send, door: Position, now: number) {
     if (!this.grounded) return

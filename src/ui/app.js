@@ -24,6 +24,8 @@ let botPosition = null;
 let players = [];
 let chatRevision = null;
 let chatRequest = null;
+let inventoryRevision = null;
+let inventoryRequest = null;
 // A hash of the gamertag picks the animal, so a player keeps it across reconnects and browser tabs.
 const playerAnimals = ['🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🐔','🐧','🐺','🐗','🐴','🦄','🐲'];
 function playerAnimal (name) {
@@ -586,6 +588,31 @@ async function loadChat () {
     if (chatRequest === controller) chatRevision = null;
   } finally { if (chatRequest === controller) chatRequest = null; }
 }
+async function loadInventory () {
+  if (inventoryRequest) inventoryRequest.abort();
+  const controller = inventoryRequest = new AbortController();
+  try {
+    const response = await fetch('/api/inventory', {signal:controller.signal});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error);
+    if (inventoryRequest === controller) renderInventory(Boolean(result.known), Array.isArray(result.items) ? result.items : []);
+  } catch (error) {
+    // The next status update retries.
+    if (inventoryRequest === controller) inventoryRevision = null;
+  } finally { if (inventoryRequest === controller) inventoryRequest = null; }
+}
+// Item totals as the server reports them, largest first; read-only.
+function renderInventory (known, items) {
+  const total = items.reduce((sum, item) => sum + item.count, 0);
+  byId('inventory-heading').textContent = 'Inventar (' + total + ')';
+  byId('inventory-list').replaceChildren(...items.map(item => {
+    const entry = document.createElement('li');
+    entry.textContent = item.name.replace(/^minecraft:/, '') + ' ×' + item.count;
+    return entry;
+  }));
+  byId('inventory-empty').hidden = items.length > 0;
+  byId('inventory-empty').textContent = known ? 'Inventar leer.' : 'Inventar unbekannt (nicht verbunden).';
+}
 function chatSpan (className, text) {
   const span = document.createElement('span'); span.className = className; span.textContent = text;
   return span;
@@ -1011,6 +1038,7 @@ events.onmessage = event => {
   players = Array.isArray(state.players) ? state.players : [];
   renderPlayers(Array.isArray(state.roster) ? state.roster : [], state.status === 'spawned');
   if (state.chatRevision !== chatRevision) { chatRevision = state.chatRevision; void loadChat(); }
+  if (state.inventoryRevision !== inventoryRevision) { inventoryRevision = state.inventoryRevision; void loadInventory(); }
   if (archiveEnabled && followBot && botPosition && view && !drag) {
     const x = Math.floor(botPosition.x - view.size / 2); const z = Math.floor(botPosition.z - view.size / 2);
     if (Math.abs(x - view.x) >= 16 || Math.abs(z - view.z) >= 16) {

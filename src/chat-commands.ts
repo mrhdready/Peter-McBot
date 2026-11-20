@@ -6,16 +6,25 @@ import type { BotController, NavigationOrigin } from './bot.js'
 import type { PlaceStore, Poi } from './places.js'
 import type { Position } from './state.js'
 import { WorldError, dimensionId } from './world.js'
+import { shortName } from './inventory.js'
+
+type PendingGive = { token: number; player: string; name: string; count: number; requested: number | null }
 
 const COOLDOWN_MS = 2000
 const COME_DISTANCE = 2
-const HELP = 'Befehle: hallo, go <Wegpunkt>, come, find <Block>, stop'
+// After walking up, the receiver must still be this close (horizontally) or the bot keeps the items.
+const GIVE_REACH = 4
+const INVENTORY_LINES = 8
+const HELP = 'Befehle: hallo, go <Wegpunkt>, come, find <Block>, inventory, give <Item> [Anzahl], stop'
 const log = (message: string) => console.log('[chat] ' + message)
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 export class ChatCommands {
   private prefix: RegExp
   private lastCommand = new Map<string, number>()
+  // The give run whose navigation is under way; a newer one replaces it.
+  private pendingGive: PendingGive | null = null
+  private giveToken = 0
 
   constructor (private bot: BotController, private places: PlaceStore | null, private reach: number, name: string, private now = Date.now) {
     // The name may contain spaces; it must be followed by optional "," or ":" and then whitespace or the end.
@@ -39,6 +48,8 @@ export class ChatCommands {
         case 'go': return await this.go(sender, argument)
         case 'come': return this.come(sender)
         case 'find': return await this.find(sender, argument)
+        case 'inventory': case 'inv': return this.inventory()
+        case 'give': return this.give(sender, rest)
         case 'stop': return this.stop()
         default: return this.say(HELP)
       }
@@ -121,6 +132,61 @@ export class ChatCommands {
       : `Kein ${name} im geladenen Bereich.`)
   }
 
+  private inventory () {
+    const inventory = this.bot.state.inventory
+    if (!inventory.known) return this.say('Mein Inventar ist noch unbekannt.')
+    const items = inventory.items()
+    if (!items.length) return this.say('Mein Inventar ist leer.')
+    const shown = items.slice(0, INVENTORY_LINES).map(item => `${shortName(item.name)} ×${item.count}`)
+    this.say('Inventar: ' + shown.join(', ') + (items.length > INVENTORY_LINES ? ` … +${items.length - INVENTORY_LINES} weitere` : ''))
+  }
+
+  /** give <item> [count]: walks up to the sender like come, then throws the items towards them. */
+  private give (sender: string, words: string[]) {
+    const amountText = words.length > 1 && /^\d+$/.test(words.at(-1)!) ? words.pop()! : null
+    const query = words.join(' ').toLowerCase()
+    if (!query) return this.say('Was soll ich geben? give <Item> [Anzahl]')
+    const requested = amountText === null ? null : Number(amountText)
+    if (requested !== null && (requested < 1 || requested > 2304)) return this.say('Die Anzahl muss zwischen 1 und 2304 liegen.')
+    if (!this.bot.state.inventory.known) return this.say('Mein Inventar ist noch unbekannt.')
+    const items = this.bot.state.inventory.items()
+    const wanted = shortName(query)
+    let found = items.filter(item => shortName(item.name) === wanted)
+    if (!found.length) found = items.filter(item => shortName(item.name).startsWith(wanted))
+    if (!found.length) return this.say(`Ich habe kein ${wanted}.`)
+    if (found.length > 1) return this.say('Mehrdeutig: ' + found.slice(0, 5).map(item => shortName(item.name)).join(', ') + (found.length > 5 ? ', …' : ''))
+    const item = found[0]
+    const player = this.player(sender)
+    const p = this.bot.state.position
+    if (!player) return this.say(`Ich sehe dich nicht, ${sender}.`)
+    if (!p) return this.say('Meine Position ist gerade unbekannt.')
+    const pending = { token: ++this.giveToken, player: sender, name: item.name, count: requested ?? item.count, requested }
+    const dx = player.position.x - p.x; const dz = player.position.z - p.z; const d = Math.hypot(dx, dz)
+    if (d <= COME_DISTANCE + .5) return this.handOver(pending)
+    const x = Math.floor(player.position.x - dx / d * COME_DISTANCE); const z = Math.floor(player.position.z - dz / d * COME_DISTANCE)
+    this.pendingGive = pending
+    this.navigate(x, z, { player: sender, label: sender, give: pending.token })
+  }
+
+  /** Throws the items if the receiver is still close; answers with what the server confirmed. */
+  private handOver (pending: PendingGive) {
+    const player = this.player(pending.player)
+    const p = this.bot.state.position
+    if (!player || !p || Math.hypot(player.position.x - p.x, player.position.z - p.z) > GIVE_REACH) {
+      return this.say(`Du bist weggelaufen, ${pending.player}. Ich behalte die Sachen.`)
+    }
+    const name = shortName(pending.name)
+    const available = this.bot.state.inventory.items().find(item => item.name === pending.name)?.count ?? 0
+    if (!available) return this.say(`Ich habe kein ${name} mehr.`)
+    const count = Math.min(pending.count, available)
+    void this.bot.dropItems(pending.name, count, player.position).then(dropped => {
+      this.say(pending.requested !== null && dropped < pending.requested ? `Ich habe nur ${dropped} ${name}, hier sind sie.` : `Hier, ${dropped} ${name}.`)
+    }, (error: unknown) => {
+      log(`Werfen fehlgeschlagen: ${error instanceof Error ? error.message : String(error)}`)
+      this.say('Werfen fehlgeschlagen.')
+    })
+  }
+
   private stop () {
     const active = ['planning', 'moving'].includes(this.bot.state.navigation.status)
     if (!active) return this.say('Ich laufe gerade nicht.')
@@ -132,6 +198,12 @@ export class ChatCommands {
 
   private navigationEnded (origin: NavigationOrigin | null, status: string, message: string | null) {
     if (!origin) return
+    if (origin.give !== undefined) {
+      // Only the newest give run may still hand over; it ends with the hand-over instead of an arrival line.
+      const pending = this.pendingGive?.token === origin.give ? this.pendingGive : null
+      if (pending) this.pendingGive = null
+      if (pending && status === 'arrived') return this.handOver(pending)
+    }
     if (status === 'arrived') this.say(`Angekommen bei ${origin.label}.`)
     else if (status === 'error') this.say(`Weg zu ${origin.label} fehlgeschlagen: ${message ?? 'unbekannter Fehler'}`)
     else this.say(`Weg zu ${origin.label} abgebrochen.`)

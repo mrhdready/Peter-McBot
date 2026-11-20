@@ -1,4 +1,5 @@
 import { ChunkWorld } from './world.js'
+import { Inventory } from './inventory.js'
 
 export type Position = { x: number; y: number; z: number }
 export type Status = 'disconnected' | 'connecting' | 'spawned' | 'reconnecting' | 'dead' | 'error'
@@ -22,6 +23,8 @@ export class WorldState extends ChunkWorld {
   players = new Map<string, Player>()
   // All players online on the server (from player_list) except the bot, keyed by UUID; memory only.
   roster = new Map<string, string>()
+  // The bot's own inventory; memory only.
+  inventory = new Inventory()
   resetWorld () {
     this.position = null
     this.lastServerPosition = null
@@ -29,6 +32,7 @@ export class WorldState extends ChunkWorld {
     this.dimension = null
     this.players.clear()
     this.roster.clear()
+    this.inventory.reset()
     this.clearChunks()
   }
 

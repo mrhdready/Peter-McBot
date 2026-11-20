@@ -43,6 +43,7 @@ test('HTTP queues commands, validates requests, and streams state using SSE', as
   assert.deepEqual(await fetch(base + '/api/block-ids').then(r => r.json()), { blockIds: [] })
   assert.equal((await fetch(base + '/api/status').then(r => r.json())).status, 'disconnected')
   assert.deepEqual(await fetch(base + '/api/chat').then(r => r.json()), { revision: 0, lines: [] })
+  assert.deepEqual(await fetch(base + '/api/inventory').then(r => r.json()), { revision: 0, known: false, items: [] })
   assert.equal((await fetch(base + '/api/blocks?block=stone')).status, 409)
   assert.equal((await fetch(base + '/api/blocks?block=%3Cbad%3E')).status, 400)
   assert.equal((await fetch(base + '/api/blocks?block=stone&limit=101')).status, 400)
@@ -150,6 +151,7 @@ test('map markers select underground hits, survive map refresh and discard obsol
   ], coverage, outcome: 'found' }
   let events, pendingSearch, pendingPreview
   let chat = { revision: 0, lines: [] }
+  let inventory = { revision: 0, known: false, items: [] }
   const requests = []
   let now = 10000
   class Clock extends Date { static now () { return now } }
@@ -167,7 +169,7 @@ test('map markers select underground hits, survive map refresh and discard obsol
         return {ok:true,json:async()=>({target,origin:{...state.position},session:state.coverage.session,revision:state.worldRevision??0,
           path:[{x:state.position.x,y:68,z:state.position.z},{x:target.x+.5,y:68,z:target.z+.5}]})}
       }
-      const body = url === '/api/map' ? map : url === '/api/chat' ? chat : url === '/api/block-ids' ? { blockIds: ['minecraft:diamond_ore'] } : result
+      const body = url === '/api/map' ? map : url === '/api/chat' ? chat : url === '/api/inventory' ? inventory : url === '/api/block-ids' ? { blockIds: ['minecraft:diamond_ore'] } : result
       return { ok: true, json: async () => body }
     }
   })
@@ -232,6 +234,14 @@ test('map markers select underground hits, survive map refresh and discard obsol
   const chatFetches = requests.filter(request => request.url === '/api/chat').length
   await publish()
   assert.equal(requests.filter(request => request.url === '/api/chat').length, chatFetches, 'An unchanged revision does not refetch')
+  // A new inventory revision refetches the read-only item totals.
+  assert.equal(byId('inventory-empty').textContent, 'Inventar unbekannt (nicht verbunden).')
+  inventory = { revision: 3, known: true, items: [{ name: 'minecraft:dirt', count: 12 }, { name: 'minecraft:torch', count: 3 }] }
+  state.inventoryRevision = 3
+  await publish()
+  assert.equal(byId('inventory-heading').textContent, 'Inventar (15)')
+  assert.deepEqual(byId('inventory-list').children.map(row => row.textContent), ['dirt ×12', 'torch ×3'])
+  assert.equal(byId('inventory-empty').hidden, true)
   state.roster = []
   state.players = []
   await publish()

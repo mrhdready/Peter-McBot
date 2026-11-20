@@ -14,7 +14,7 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
   let mapClients = 0
   let metrics: ReturnType<typeof mapRuntimeMetrics> | null = null
   let metricsAt = 0
-  const snapshot = () => JSON.stringify({ ...bot.state.snapshot(), chatRevision: bot.chatRevision, ...(places ? { placesRevision: places.revision } : {}), ...(skins ? { skin: skins.status() } : {}) })
+  const snapshot = () => JSON.stringify({ ...bot.state.snapshot(), chatRevision: bot.chatRevision, inventoryRevision: bot.state.inventory.revision, ...(places ? { placesRevision: places.revision } : {}), ...(skins ? { skin: skins.status() } : {}) })
   const broadcast = () => {
     const data = `data: ${snapshot()}\n\n`
     for (const response of streams) {
@@ -87,6 +87,9 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
       reply(200, bot.state.snapshot())
     } else if (request.method === 'GET' && request.url === '/api/chat') {
       reply(200, bot.chatLog())
+    } else if (request.method === 'GET' && request.url === '/api/inventory') {
+      const inventory = bot.state.inventory
+      reply(200, { revision: inventory.revision, known: inventory.known, items: inventory.items() })
     } else if (request.method === 'GET' && request.url === '/api/block-ids') {
       reply(200, { blockIds: bot.state.blockIds() })
     } else if (request.method === 'GET' && request.url === '/healthz') {
