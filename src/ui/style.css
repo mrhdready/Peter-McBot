@@ -110,6 +110,25 @@ details.panel[open] > summary { margin-bottom: .6rem; }
 .skin-fields { display: grid; grid-template-columns: auto 1fr; gap: .4rem .6rem; align-items: center; margin-top: .4rem; }
 .skin-fields input, .skin-fields select { min-width: 0; }
 .skin .actions { flex-wrap: wrap; }
+.chat-log { max-height: 18rem; overflow-y: auto; font-size: .9rem; overflow-wrap: anywhere; }
+.chat-line { padding: .1rem 0; }
+.chat-time { color: var(--muted); font-size: .8rem; }
+.chat-name { font-weight: 600; }
+.chat-whisper { font-style: italic; }
+.chat-bot { color: var(--accent); }
+.chat-event { color: var(--muted); font-size: .8rem; text-align: center; }
+
+/* Wide screens have room beside the square map: the chat leaves the sidebar and becomes a full-height left column. */
+@media (min-width: 1400px) {
+  .layout { position: relative; grid-template-columns: var(--chat) minmax(0, 1fr) var(--sidebar); --chat: 20rem; }
+  .map-area { grid-column: 2; }
+  #sidebar { grid-column: 3; }
+  #chat-panel { position: absolute; top: .75rem; bottom: .75rem; left: .75rem; width: calc(var(--chat) - .75rem); }
+  #chat-panel > summary { pointer-events: none; list-style: none; }
+  #chat-panel > summary::-webkit-details-marker { display: none; }
+  /* Positioned against the panel, because a <details> body cannot stretch to the panel height. */
+  #chat-panel .chat-log { position: absolute; top: 2.9rem; bottom: .8rem; left: .8rem; right: .8rem; max-height: none; }
+}
 
 @media (max-width: 900px) {
   body { display: block; height: auto; padding-bottom: 7.5rem; }

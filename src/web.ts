@@ -14,7 +14,7 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
   let mapClients = 0
   let metrics: ReturnType<typeof mapRuntimeMetrics> | null = null
   let metricsAt = 0
-  const snapshot = () => JSON.stringify({ ...bot.state.snapshot(), ...(places ? { placesRevision: places.revision } : {}), ...(skins ? { skin: skins.status() } : {}) })
+  const snapshot = () => JSON.stringify({ ...bot.state.snapshot(), chatRevision: bot.chatRevision, ...(places ? { placesRevision: places.revision } : {}), ...(skins ? { skin: skins.status() } : {}) })
   const broadcast = () => {
     const data = `data: ${snapshot()}\n\n`
     for (const response of streams) {
@@ -85,6 +85,8 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
       response.end(request.url === '/?measure=1' ? content.replace('</html>', mapPerformancePanel + '</html>') : content)
     } else if (request.method === 'GET' && request.url === '/api/status') {
       reply(200, bot.state.snapshot())
+    } else if (request.method === 'GET' && request.url === '/api/chat') {
+      reply(200, bot.chatLog())
     } else if (request.method === 'GET' && request.url === '/api/block-ids') {
       reply(200, { blockIds: bot.state.blockIds() })
     } else if (request.method === 'GET' && request.url === '/healthz') {

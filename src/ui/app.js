@@ -22,6 +22,8 @@ let mapContext = '';
 let previousNavigationStatus = null;
 let botPosition = null;
 let players = [];
+let chatRevision = null;
+let chatRequest = null;
 // A hash of the gamertag picks the animal, so a player keeps it across reconnects and browser tabs.
 const playerAnimals = ['🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🐔','🐧','🐺','🐗','🐴','🦄','🐲'];
 function playerAnimal (name) {
@@ -571,6 +573,41 @@ function renderPlayers (roster, spawned) {
   byId('player-empty').hidden = roster.length > 0;
   byId('player-empty').textContent = spawned ? 'Keine anderen Spieler online.' : 'Nicht verbunden.';
 }
+async function loadChat () {
+  if (chatRequest) chatRequest.abort();
+  const controller = chatRequest = new AbortController();
+  try {
+    const response = await fetch('/api/chat', {signal:controller.signal});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error);
+    if (chatRequest === controller) renderChat(Array.isArray(result.lines) ? result.lines : []);
+  } catch (error) {
+    // The next status update retries.
+    if (chatRequest === controller) chatRevision = null;
+  } finally { if (chatRequest === controller) chatRequest = null; }
+}
+function chatSpan (className, text) {
+  const span = document.createElement('span'); span.className = className; span.textContent = text;
+  return span;
+}
+// Follows new lines only while the log is scrolled to the end, so reading older lines is not interrupted.
+function renderChat (lines) {
+  const log = byId('chat-log');
+  const atEnd = !(log.scrollHeight - log.scrollTop - log.clientHeight > 8);
+  log.replaceChildren(...lines.map(line => {
+    const item = document.createElement('div');
+    const time = new Date(line.at).toLocaleTimeString('de-DE', {hour:'2-digit', minute:'2-digit'});
+    item.className = 'chat-line chat-' + line.kind;
+    if (line.kind === 'event') { item.textContent = time + ' · ' + line.text; return item; }
+    const icon = line.kind === 'bot' ? '🤖' : playerAnimal(line.name);
+    item.append(chatSpan('chat-time', time + ' '));
+    item.append(chatSpan('chat-name', icon + ' ' + line.name + (line.kind === 'whisper' ? ' flüstert' : '') + ': '));
+    item.append(chatSpan('chat-text', line.text));
+    return item;
+  }));
+  byId('chat-empty').hidden = lines.length > 0;
+  if (atEnd) log.scrollTop = log.scrollHeight;
+}
 async function deletePoi (poi) {
   if (deleteArmed?.id !== poi.id) {
     if (deleteArmed) clearTimeout(deleteArmed.timer);
@@ -920,6 +957,13 @@ byId('skin-reconnect').onclick = async () => {
     byId('skin-feedback').textContent = 'Verbindet mit dem neuen Skin neu …';
   } catch (error) { byId('skin-feedback').textContent = 'Neu verbinden fehlgeschlagen: ' + error.message; }
 };
+// The chat starts collapsed on phones; from 1400px it is a left column that always stays open.
+const wideChat = globalThis.matchMedia?.('(min-width: 1400px)');
+if (wideChat) {
+  byId('chat-panel').open = !globalThis.matchMedia('(max-width: 900px)').matches;
+  wideChat.onchange = () => { if (wideChat.matches) byId('chat-panel').open = true; };
+}
+byId('chat-panel').ontoggle = () => { const log = byId('chat-log'); log.scrollTop = log.scrollHeight; };
 const events = new EventSource('/api/events');
 events.onmessage = event => {
   const state = JSON.parse(event.data);
@@ -966,6 +1010,7 @@ events.onmessage = event => {
   botPosition = state.position;
   players = Array.isArray(state.players) ? state.players : [];
   renderPlayers(Array.isArray(state.roster) ? state.roster : [], state.status === 'spawned');
+  if (state.chatRevision !== chatRevision) { chatRevision = state.chatRevision; void loadChat(); }
   if (archiveEnabled && followBot && botPosition && view && !drag) {
     const x = Math.floor(botPosition.x - view.size / 2); const z = Math.floor(botPosition.z - view.size / 2);
     if (Math.abs(x - view.x) >= 16 || Math.abs(z - view.z) >= 16) {

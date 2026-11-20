@@ -42,6 +42,7 @@ test('HTTP queues commands, validates requests, and streams state using SSE', as
   assert.equal((await fetch(base + '/api/map')).status, 409)
   assert.deepEqual(await fetch(base + '/api/block-ids').then(r => r.json()), { blockIds: [] })
   assert.equal((await fetch(base + '/api/status').then(r => r.json())).status, 'disconnected')
+  assert.deepEqual(await fetch(base + '/api/chat').then(r => r.json()), { revision: 0, lines: [] })
   assert.equal((await fetch(base + '/api/blocks?block=stone')).status, 409)
   assert.equal((await fetch(base + '/api/blocks?block=%3Cbad%3E')).status, 400)
   assert.equal((await fetch(base + '/api/blocks?block=stone&limit=101')).status, 400)
@@ -59,6 +60,7 @@ test('HTTP queues commands, validates requests, and streams state using SSE', as
   const reader = events.body.getReader()
   const data = new TextDecoder().decode((await reader.read()).value)
   assert.match(data, /"status":"reconnecting"/)
+  assert.match(data, /"chatRevision":0/)
   await reader.cancel()
   assert.equal((await fetch(base + '/missing')).status, 404)
 })
@@ -147,6 +149,7 @@ test('map markers select underground hits, survive map refresh and discard obsol
     { x: -1, y: 5, z: -1, distance: 65 }, { x: -1, y: -6, z: -1, distance: 76 }, { x: 4, y: 7, z: 5, distance: 64 }
   ], coverage, outcome: 'found' }
   let events, pendingSearch, pendingPreview
+  let chat = { revision: 0, lines: [] }
   const requests = []
   let now = 10000
   class Clock extends Date { static now () { return now } }
@@ -164,7 +167,7 @@ test('map markers select underground hits, survive map refresh and discard obsol
         return {ok:true,json:async()=>({target,origin:{...state.position},session:state.coverage.session,revision:state.worldRevision??0,
           path:[{x:state.position.x,y:68,z:state.position.z},{x:target.x+.5,y:68,z:target.z+.5}]})}
       }
-      const body = url === '/api/map' ? map : url === '/api/block-ids' ? { blockIds: ['minecraft:diamond_ore'] } : result
+      const body = url === '/api/map' ? map : url === '/api/chat' ? chat : url === '/api/block-ids' ? { blockIds: ['minecraft:diamond_ore'] } : result
       return { ok: true, json: async () => body }
     }
   })
@@ -208,6 +211,27 @@ test('map markers select underground hits, survive map refresh and discard obsol
   ])
   assert.equal(playerRows[1].children[0].textContent.split(' ')[0], playerPin.textContent, 'The list uses the same animal as the map')
   assert.equal(playerRows[2].className, 'player-far')
+  // A new chat revision refetches the read-only log: animal per player, whisper marker, the bot's replies, grey connection marks.
+  assert.equal(byId('chat-empty').hidden, false)
+  chat = { revision: 4, lines: [
+    { at: 0, kind: 'event', name: '', text: 'Verbunden' },
+    { at: 0, kind: 'chat', name: 'Alex', text: 'hi' },
+    { at: 0, kind: 'whisper', name: 'Bea', text: 'psst' },
+    { at: 0, kind: 'bot', name: 'Peter Bot', text: 'Hallo Alex!' }
+  ] }
+  state.chatRevision = 4
+  await publish()
+  const chatRows = byId('chat-log').children
+  assert.deepEqual(chatRows.map(row => row.className), ['chat-line chat-event', 'chat-line chat-chat', 'chat-line chat-whisper', 'chat-line chat-bot'])
+  assert.match(chatRows[0].textContent, / · Verbunden$/)
+  assert.equal(chatRows[1].children[1].textContent, playerPin.textContent + ' Alex: ')
+  assert.equal(chatRows[1].children[2].textContent, 'hi')
+  assert.match(chatRows[2].children[1].textContent, / Bea flüstert: $/)
+  assert.equal(chatRows[3].children[1].textContent, '🤖 Peter Bot: ')
+  assert.equal(byId('chat-empty').hidden, true)
+  const chatFetches = requests.filter(request => request.url === '/api/chat').length
+  await publish()
+  assert.equal(requests.filter(request => request.url === '/api/chat').length, chatFetches, 'An unchanged revision does not refetch')
   state.roster = []
   state.players = []
   await publish()

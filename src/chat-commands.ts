@@ -55,7 +55,11 @@ export class ChatCommands {
 
   private player (name: string) {
     const players = [...this.bot.state.players.values()]
-    return players.find(player => player.name === name) ?? players.find(player => player.name.toLowerCase() === name.toLowerCase()) ?? null
+    // Chat sender names may carry formatting codes (§x) or padding that add_player names do not.
+    const plain = (text: string) => text.replace(/§./g, '').trim().toLowerCase()
+    const found = players.find(player => player.name === name) ?? players.find(player => plain(player.name) === plain(name)) ?? null
+    if (!found) log(`Absender ${JSON.stringify(name)} nicht unter sichtbaren Spielern: ${JSON.stringify(players.map(player => player.name))}`)
+    return found
   }
 
   /** Starts a navigation if the target lies within the loaded radius; answers either way. */

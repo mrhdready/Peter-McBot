@@ -57,6 +57,28 @@ test('player chat lines reach the handler; own, system and translated lines do n
     xuid: '', platform_chat_id: '', has_filtered_message: false }])
 })
 
+test('the chat log keeps player lines, whispers, bot replies and connection marks, without formatting codes and capped at 100', t => {
+  const { bot, client } = setup(t)
+  const lines = () => bot.chatLog().lines.map(line => [line.kind, line.name, line.text])
+  assert.deepEqual(lines(), [['event', '', 'Verbunden']])
+  const revision = bot.chatRevision
+  client.emit('text', { type: 'chat', source_name: '§aAlex', message: '§lhi' })
+  client.emit('text', { type: 'whisper', source_name: 'Bea', message: 'psst' })
+  client.emit('text', { type: 'chat', source_name: 'Peter Bot', message: 'echo' })
+  client.emit('text', { type: 'system', message: 'Server restart' })
+  bot.say('Moin')
+  assert.equal(bot.chatRevision, revision + 3)
+  assert.deepEqual(lines(), [['event', '', 'Verbunden'], ['chat', 'Alex', 'hi'], ['whisper', 'Bea', 'psst'], ['bot', 'Peter Bot', 'Moin']])
+  for (let i = 0; i < 120; i++) client.emit('text', { type: 'chat', source_name: 'Alex', message: 'line ' + i })
+  bot.enqueue('disconnect'); bot.step()
+  assert.equal(bot.chatLog().lines.length, 100)
+  assert.deepEqual(lines().slice(0, 1), [['chat', 'Alex', 'line 21']])
+  assert.deepEqual(lines().slice(-2), [['chat', 'Alex', 'line 119'], ['event', '', 'Verbindung getrennt']])
+  // Copies, so callers cannot change the log.
+  bot.chatLog().lines[0].text = 'changed'
+  assert.equal(bot.chatLog().lines[0].text, 'line 21')
+})
+
 test('the bot name prefix is case-insensitive, allows @ and a separator, and must stand alone', async t => {
   const { said, command } = setup(t)
   await command('@peter bot, Hallo')

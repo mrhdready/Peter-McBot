@@ -16,6 +16,9 @@ export type NavigationOrigin = { player: string; label: string }
 export type Command = 'connect' | 'disconnect' | 'stop_navigation' | { type: 'navigate'; x: number; z: number; origin?: NavigationOrigin }
 export type NavigationEnd = (origin: NavigationOrigin | null, status: string, message: string | null) => void
 export type ClientFactory = (config: Config) => BotClient
+/** One line of the web UI's chat log; `event` lines mark connects and disconnects. */
+export type ChatLine = { at: number; kind: 'chat' | 'whisper' | 'bot' | 'event'; name: string; text: string }
+const CHAT_LOG_SIZE = 100
 const isPosition = (position: Position | undefined): position is Position =>
   Boolean(position) && [position!.x, position!.y, position!.z].every(Number.isFinite)
 
@@ -34,6 +37,8 @@ export class BotController {
   private previewJob: { step: () => void; cancel: () => void } | null = null
   private runActive = false
   private runOrigin: NavigationOrigin | null = null
+  private chatLines: ChatLine[] = []
+  private chatLogRevision = 0
   /** Called for every chat or whisper line from another player. */
   onChat: (sender: string, message: string) => void = () => {}
   /** Called once when a navigation run ends: arrived, failed, stopped, replaced or lost with the connection. */
@@ -187,6 +192,7 @@ export class BotController {
         this.attempts = 0
         client.queue('request_chunk_radius', { chunk_radius: this.config.radius, max_radius: this.config.radius })
         finishLoading()
+        this.logChat('event', '', 'Verbunden')
         this.publish()
       })
       client.on('respawn', (packet: { state: number; position: Position }) => {
@@ -247,7 +253,10 @@ export class BotController {
       client.on('text', (packet: { type?: string; source_name?: string; message?: string }) => {
         if (!active() || (packet.type !== 'chat' && packet.type !== 'whisper')) return
         const sender = String(packet.source_name ?? '')
-        if (sender && sender !== this.config.username && typeof packet.message === 'string') this.onChat(sender, packet.message)
+        if (sender && sender !== this.config.username && typeof packet.message === 'string') {
+          this.logChat(packet.type, sender, packet.message)
+          this.onChat(sender, packet.message)
+        }
       })
       client.on('server_post_move', (packet: { position: Position }) => {
         if (active()) this.updatePosition(packet.position)
@@ -296,7 +305,24 @@ export class BotController {
       needs_translation: false, category: 'authored', type: 'chat', source_name: this.config.username, message,
       xuid: '', platform_chat_id: '', has_filtered_message: false
     })
+    this.logChat('bot', this.config.username, message)
     return true
+  }
+
+  /** Revision of the chat log; it changes with every new line. */
+  get chatRevision () { return this.chatLogRevision }
+
+  /** The last 100 chat lines, oldest first; kept in memory only. */
+  chatLog () { return { revision: this.chatLogRevision, lines: this.chatLines.map(line => ({ ...line })) } }
+
+  private logChat (kind: ChatLine['kind'], name: string, text: string) {
+    // Minecraft formatting codes (§x) are dropped; the UI shows plain text.
+    const plain = (value: string) => value.replace(/§./g, '')
+    this.chatLines.push({ at: this.now(), kind, name: plain(name), text: plain(text) })
+    if (this.chatLines.length > CHAT_LOG_SIZE) this.chatLines.shift()
+    this.chatLogRevision++
+    // The next tick publishes, so a burst of lines costs one broadcast.
+    this.publishAt = 0
   }
 
   /** The chat origin of the running navigation, or null when none runs or it came from the web UI. */
@@ -332,6 +358,7 @@ export class BotController {
 
   private closeClient () {
     this.previewJob?.cancel()
+    if (this.state.status === 'spawned') this.logChat('event', '', 'Verbindung getrennt')
     const old = this.client
     this.client = null
     this.navigator.reset()

@@ -23,8 +23,8 @@
 <li><span class="legend-pin" aria-hidden="true">📌</span>Ziel</li>
 <li><span class="legend-pin" aria-hidden="true">📍</span>Ort</li>
 <li><span class="legend-pin" aria-hidden="true">🦊</span>Spieler</li>
+<li><span class="legend-pin" aria-hidden="true">⛏️</span>Treffer</li>
 <li><i class="legend-line"></i>Weg (gestrichelt: Vorschau)</li>
-<li><i style="background:#22d3ee"></i>Treffer</li>
 <li><i style="background:#202b40"></i>Unbekannt</li>
 <li><i style="background:repeating-linear-gradient(45deg,#d5ac50 0 2px,#858b92 2px 4px)"></i>Daten fehlen oben</li>
 <li><i style="background:#c5ccd3"></i>Historisch</li>
@@ -81,6 +81,12 @@
 <ul id="player-list" class="place-list" aria-label="Spieler auf dem Server"></ul>
 <p id="player-empty" class="hint">Nicht verbunden.</p>
 </details>
+<!-- Read-only chat log; from 1400px it becomes a fixed left column (CSS). The script opens it except below 900px. -->
+<details class="panel chat" id="chat-panel">
+<summary><h2 id="chat-heading">Chat</h2></summary>
+<div id="chat-log" class="chat-log" role="log" aria-labelledby="chat-heading"></div>
+<p id="chat-empty" class="hint">Noch keine Nachrichten.</p>
+</details>
 <details class="panel skin" id="skin-panel" hidden>
 <summary><h2>Skin</h2></summary>
 <img id="skin-preview" class="skin-preview" alt="Gespeicherte Skin-Textur" width="128" height="128" hidden>
@@ -103,6 +109,8 @@
 <p>Stopp beendet den Vortrieb; eine laufende Sprung- oder Fallbewegung endet bei der Landung.</p>
 <h3>Skin</h3>
 <p>Ein eigener Skin (PNG, 64×64 oder 64×32) wird beim Verbinden einmal an den Server geschickt. Nach dem Hochladen gilt er erst ab der nächsten Verbindung; „Jetzt neu verbinden“ trennt und verbindet sofort. Ob andere Spieler ihn sehen, hängt auch von der Welteinstellung „Nur vertrauenswürdige Skins“ ab.</p>
+<h3>Chat</h3>
+<p>Zeigt die letzten 100 Chatzeilen anderer Spieler, Flüstern an den Bot (kursiv) und die Antworten des Bots auf Chat-Befehle. Graue Zeilen markieren Verbinden und Trennen. Der Verlauf liegt nur im Speicher und ist nach einem Neustart des Bots leer. Aus der Oberfläche kann nicht geschrieben werden.</p>
 <h3>Blocksuche</h3>
 <p>Treffer werden mit ⛏️ markiert, auch unter der Oberfläche. „Zurücksetzen“ entfernt sie wieder. „Ziel“ in der Trefferliste übernimmt X/Z als Navigationsziel. Bei Weltänderungen erneut suchen.</p>
 </details>
