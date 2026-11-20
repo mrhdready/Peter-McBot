@@ -13,6 +13,8 @@ export interface BotClient extends EventEmitter {
 }
 export type Command = 'connect' | 'disconnect' | 'stop_navigation' | { type: 'navigate'; x: number; z: number }
 export type ClientFactory = (config: Config) => BotClient
+const isPosition = (position: Position | undefined): position is Position =>
+  Boolean(position) && [position!.x, position!.y, position!.z].every(Number.isFinite)
 
 export class BotController {
   readonly state: WorldState
@@ -179,10 +181,28 @@ export class BotController {
         finishLoading()
       })
       client.on('move_player', (packet: { runtime_id: bigint | string; position: Position; mode?: string | number }) => {
-        if (active() && String(packet.runtime_id) === String(client.entityId)) {
+        if (!active()) return
+        if (String(packet.runtime_id) === String(client.entityId)) {
           this.updatePosition(packet.position)
           if (packet.mode === 'teleport' || packet.mode === 'reset' || packet.mode === 1 || packet.mode === 2) this.navigator.acknowledgeTeleport()
-        }
+        } else this.movePlayer(packet.runtime_id, packet.position)
+      })
+      client.on('add_player', (packet: { runtime_id: bigint | string; username: string; position: Position }) => {
+        const id = String(packet.runtime_id)
+        if (active() && id !== String(client.entityId) && isPosition(packet.position)) this.state.players.set(id, { name: String(packet.username ?? ''), position: { ...packet.position } })
+      })
+      // Delta packets carry only the changed absolute coordinates.
+      client.on('move_entity_delta', (packet: { runtime_entity_id: bigint | string; x?: number; y?: number; z?: number }) => {
+        const player = active() ? this.state.players.get(String(packet.runtime_entity_id)) : undefined
+        if (!player) return
+        this.movePlayer(packet.runtime_entity_id, {
+          x: Number.isFinite(packet.x) ? packet.x! : player.position.x,
+          y: Number.isFinite(packet.y) ? packet.y! : player.position.y,
+          z: Number.isFinite(packet.z) ? packet.z! : player.position.z
+        })
+      })
+      client.on('remove_entity', (packet: { entity_id_self: bigint | string }) => {
+        if (active()) this.state.players.delete(String(packet.entity_id_self))
       })
       client.on('server_post_move', (packet: { position: Position }) => {
         if (active()) this.updatePosition(packet.position)
@@ -204,8 +224,14 @@ export class BotController {
     }
   }
 
+  // Only players announced by add_player are tracked, so other entities' movement is ignored.
+  private movePlayer (runtimeId: bigint | string, position: Position) {
+    const player = this.state.players.get(String(runtimeId))
+    if (player && isPosition(position)) player.position = { x: position.x, y: position.y, z: position.z }
+  }
+
   private updatePosition (position: Position) {
-    if (position && [position.x, position.y, position.z].every(Number.isFinite)) {
+    if (isPosition(position)) {
       this.state.position = { ...position }
       this.state.lastServerPosition = { ...position }
       this.state.positionSource = 'server'

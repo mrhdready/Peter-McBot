@@ -183,6 +183,24 @@ test('map markers select underground hits, survive map refresh and discard obsol
   assert.ok(botPin, 'The bot is a pin')
   assert.equal(botPin.style.left, '50%')
   assert.equal(botPin.style.top, '50%')
+  // Other players get an animal chip chosen by name; hovering shows name, position and distance.
+  state.players = [{ id: '20', name: 'Alex', x: 8, y: 65.62, z: 0 }]
+  await publish()
+  const playerPin = byId('map-pins').children.find(pin => pin.className.includes('pin-player'))
+  assert.ok(playerPin, 'A nearby player is a pin')
+  assert.notEqual(playerPin.textContent, '🤖')
+  assert.equal(playerPin.style.left, '75%')
+  assert.equal(playerPin.style.top, '50%')
+  state.players = [{ id: '20', name: 'Alex', x: 8, y: 65.62, z: -8 }]
+  await publish()
+  assert.equal(byId('map-pins').children.find(pin => pin.className.includes('pin-player')).textContent, playerPin.textContent, 'A player keeps the same animal')
+  byId('map').onpointermove({ clientX: 24, clientY: 8 })
+  assert.equal(byId('map-pin-overlay').hidden, false)
+  assert.equal(byId('map-pin-overlay').textContent, playerPin.textContent + ' Alex\nX: 8.0, Y: 65.6, Z: -8.0\n11 Blöcke vom Bot entfernt')
+  state.players = []
+  await publish()
+  assert.ok(!byId('map-pins').children.some(pin => pin.className.includes('pin-player')), 'A player out of range disappears')
+  assert.equal(byId('map-pin-overlay').hidden, true, 'Its overlay disappears with it')
   state.position={x:-.5,y:69.62,z:.5}
   state.navigation.path=state.navigation.path.slice(1);state.navigation.remaining=2
   await publish()

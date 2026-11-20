@@ -21,6 +21,14 @@ let mapDirty = true;
 let mapContext = '';
 let previousNavigationStatus = null;
 let botPosition = null;
+let players = [];
+// A hash of the gamertag picks the animal, so a player keeps it across reconnects and browser tabs.
+const playerAnimals = ['🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🐔','🐧','🐺','🐗','🐴','🦄','🐲'];
+function playerAnimal (name) {
+  let hash = 2166136261;
+  for (let i = 0; i < name.length; i++) hash = Math.imul(hash ^ name.charCodeAt(i), 16777619);
+  return playerAnimals[(hash >>> 0) % playerAnimals.length];
+}
 let mapNavigation = null;
 let preview = null;
 let previewRequest = null;
@@ -385,6 +393,7 @@ function pinSpecs (map) {
   if (placesEnabled && places.dimension === mapDimension) {
     for (const poi of places.pois) specs.push({key:'poi:' + poi.id, kind:'poi', x:poi.x + .5, z:poi.z + .5, poi});
   }
+  if (live) for (const player of players) specs.push({key:'player:' + player.id, kind:'player', x:player.x, z:player.z, player});
   const targetX = Number(byId('target-x').value); const targetZ = Number(byId('target-z').value);
   if (live && byId('target-x').value.trim() && byId('target-z').value.trim() && [targetX,targetZ].every(Number.isInteger)) {
     specs.push({key:'target', kind:'target', x:targetX + .5, z:targetZ + .5});
@@ -403,6 +412,10 @@ function createPin (spec) {
     return button;
   }
   const element = document.createElement('span'); element.ariaHidden = 'true';
+  if (spec.kind === 'player') {
+    element.className = 'pin pin-center pin-player'; element.textContent = playerAnimal(spec.player.name);
+    return element;
+  }
   element.className = spec.kind === 'bot' ? 'pin pin-center' : 'pin pin-pushpin';
   element.textContent = spec.kind === 'bot' ? '🤖' : '📌';
   return element;
@@ -438,6 +451,11 @@ function overlayText (spec) {
   if (spec.kind === 'bot') {
     return '🤖 Bot\nX: ' + botPosition.x.toFixed(1) + ', Y: ' + botPosition.y.toFixed(1) + ', Z: ' + botPosition.z.toFixed(1) + '\n' + byId('nav-status').textContent;
   }
+  if (spec.kind === 'player') {
+    const player = spec.player;
+    return playerAnimal(player.name) + ' ' + (player.name || 'Spieler') + '\nX: ' + player.x.toFixed(1) + ', Y: ' + player.y.toFixed(1) + ', Z: ' + player.z.toFixed(1) +
+      (botPosition ? '\n' + Math.round(Math.hypot(player.x - botPosition.x, player.z - botPosition.z)) + ' Blöcke vom Bot entfernt' : '');
+  }
   return '📌 Ziel\nX: ' + Math.floor(spec.x) + ', Z: ' + Math.floor(spec.z) + '\n' + (byId('preview-status').textContent || byId('nav-status').textContent);
 }
 function showOverlay (key) {
@@ -463,7 +481,7 @@ function pinAt (clientX, clientY) {
   let best = null; let bestDistance = 20;
   for (const pin of pins.values()) {
     const x = bounds.left + (pin.spec.x - currentMap.x) * scale;
-    const z = bounds.top + (pin.spec.z - currentMap.z) * scale - (pin.spec.kind === 'bot' ? 0 : 14);
+    const z = bounds.top + (pin.spec.z - currentMap.z) * scale - (pin.spec.kind === 'bot' || pin.spec.kind === 'player' ? 0 : 14);
     const distance = Math.hypot(clientX - x, clientY - z);
     // Strictly nearer only: on a tie the earlier pin wins, so a place beats the target or bot on the same cell.
     if (distance < bestDistance) { best = pin; bestDistance = distance; }
@@ -921,6 +939,7 @@ events.onmessage = event => {
   }
   registryReady = Boolean(coverage?.ready);
   botPosition = state.position;
+  players = Array.isArray(state.players) ? state.players : [];
   if (archiveEnabled && followBot && botPosition && view && !drag) {
     const x = Math.floor(botPosition.x - view.size / 2); const z = Math.floor(botPosition.z - view.size / 2);
     if (Math.abs(x - view.x) >= 16 || Math.abs(z - view.z) >= 16) {

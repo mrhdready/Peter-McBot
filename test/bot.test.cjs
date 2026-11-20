@@ -234,3 +234,30 @@ test('initial loading screen sends both protocol-2225 edges once, regardless of 
     bot.stop()
   }
 })
+
+test('other players are tracked from add, move and remove packets and cleared with the world', () => {
+  const { bot, clients } = setup()
+  bot.enqueue('connect'); bot.step()
+  const client = clients[0]
+  client.emit('start_game', { player_position: { x: 0, y: 64, z: 0 }, dimension: 0 })
+  client.emit('spawn')
+  // Movement of an entity that was never announced as a player is ignored.
+  client.emit('move_player', { runtime_id: 30n, position: { x: 1, y: 65, z: 1 } })
+  assert.deepEqual(bot.state.snapshot().players, [])
+  client.emit('add_player', { runtime_id: 20n, username: 'Alex', position: { x: 5, y: 65.62, z: -3 } })
+  client.emit('add_player', { runtime_id: 10n, username: 'Bot', position: { x: 0, y: 64, z: 0 } })
+  assert.deepEqual(bot.state.snapshot().players, [{ id: '20', name: 'Alex', x: 5, y: 65.62, z: -3 }])
+  client.emit('move_player', { runtime_id: 20n, position: { x: 6, y: 65.62, z: -4 } })
+  // Delta packets omit unchanged coordinates.
+  client.emit('move_entity_delta', { runtime_entity_id: 20n, x: 7.5 })
+  assert.deepEqual(bot.state.snapshot().players, [{ id: '20', name: 'Alex', x: 7.5, y: 65.62, z: -4 }])
+  assert.equal(bot.state.position.x, 0, 'Other players never move the bot')
+  client.emit('move_player', { runtime_id: 20n, position: { x: NaN, y: 65, z: 0 } })
+  assert.equal(bot.state.snapshot().players[0].x, 7.5)
+  client.emit('remove_entity', { entity_id_self: 20n })
+  assert.deepEqual(bot.state.snapshot().players, [])
+  client.emit('add_player', { runtime_id: 21n, username: 'Steve', position: { x: 1, y: 64, z: 1 } })
+  client.emit('change_dimension', { dimension: 1 })
+  assert.equal(bot.state.players.size, 0, 'A dimension change clears the players')
+  bot.stop()
+})

@@ -2,6 +2,7 @@ import { ChunkWorld } from './world.js'
 
 export type Position = { x: number; y: number; z: number }
 export type Status = 'disconnected' | 'connecting' | 'spawned' | 'reconnecting' | 'dead' | 'error'
+export type Player = { name: string; position: Position }
 export type NavigationState = {
   status: 'idle' | 'planning' | 'moving' | 'stopped' | 'arrived' | 'error';
   target: { x: number; z: number } | null; feetY: number | null;
@@ -17,11 +18,14 @@ export class WorldState extends ChunkWorld {
   dimension: number | string | null = null
   lastError: string | null = null
   tick = 0
+  // Other players the server currently reports near the bot, keyed by runtime entity ID; memory only.
+  players = new Map<string, Player>()
   resetWorld () {
     this.position = null
     this.lastServerPosition = null
     this.positionSource = 'server'
     this.dimension = null
+    this.players.clear()
     this.clearChunks()
   }
 
@@ -34,6 +38,7 @@ export class WorldState extends ChunkWorld {
       lastServerPosition: this.lastServerPosition ? { ...this.lastServerPosition } : null,
       navigation: { ...this.navigation, path: this.navigation.path.map(point => ({ ...point })), target: this.navigation.target ? { ...this.navigation.target } : null },
       dimension: this.dimension,
+      players: [...this.players].map(([id, player]) => ({ id, name: player.name, ...player.position })),
       lastError: this.lastError,
       tick: this.tick,
       worldRevision: this.worldRevision,

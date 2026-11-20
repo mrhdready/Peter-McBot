@@ -16,14 +16,14 @@ Während der Navigation werden kleine Serverkorrekturen (höchstens 0,5 Block ne
 
 Der Cache hält einen Kreisradius von vier bis sechs Chunks. Beim Standardradius vier sind das 49 Spalten beziehungsweise 1176 Subchunks in der Overworld. Fehlende Spalten werden ausdrücklich angefordert, auch ohne neue Serverankündigung. Fehlgeschlagene Abschnittsanfragen werden begrenzt und zeitlich gestaffelt wiederholt. Unbekannte Daten gelten nicht als Luft.
 
-Die Draufsicht zeigt höchste bekannte Blöcke, keine verbindliche Navigationshöhe. Bot (🤖), Ziel (📌) und gespeicherte Orte (📍) erscheinen als Pins, Suchtreffer als türkise Punkte. Eine dünne dunkle Linie mit abgerundeten Ecken zeigt gestrichelt die Vorschau und durchgezogen den Restweg. Neue Weltdaten, Chunkwechsel und Ankunft aktualisieren die Karte; unveränderte Daten werden periodisch geprüft. SSE aktualisiert den Status ungefähr jede Sekunde.
+Die Draufsicht zeigt höchste bekannte Blöcke, keine verbindliche Navigationshöhe. Bot (🤖), Ziel (📌) und gespeicherte Orte (📍) erscheinen als Pins, Suchtreffer als türkise Punkte. Andere Spieler in Reichweite des Bots erscheinen als Tierkopf im runden Chip; das Tier ergibt sich aus einem Hash des Gamertags und bleibt so pro Spieler gleich. Hover beziehungsweise erstes Tippen zeigt Name, X/Y/Z und Entfernung zum Bot. Der Server meldet nur Spieler in der Nähe (`add_player`, `move_player`, `move_entity_delta`, `remove_entity`); wer die Reichweite verlässt, verschwindet sofort. Spielerpositionen werden weder gespeichert noch protokolliert. Eine dünne dunkle Linie mit abgerundeten Ecken zeigt gestrichelt die Vorschau und durchgezogen den Restweg. Neue Weltdaten, Chunkwechsel und Ankunft aktualisieren die Karte; unveränderte Daten werden periodisch geprüft. SSE aktualisiert den Status ungefähr jede Sekunde.
 
 Das Gelände wird kachelweise als Pixelpuffer gerastert; Blockfarben und Raster werden wiederverwendet. Cursor, Bot und Route liegen auf einer separaten Ebene, Mausereignisse werden über `requestAnimationFrame` gebündelt. Leichter heller Nebel markiert historische Daten. Der Ausschnitt reicht von standardmäßig 112 × 112 bis maximal 448 × 448 Blöcke. Große Ausschnitte verwenden begrenzte Teilabfragen; die gesamte Welt wird nicht in den Browser geladen.
 
 ## HTTP-API
 
 - `GET /healthz`: Zustand des Webprozesses, kein Nachweis einer Minecraft-Verbindung.
-- `GET /api/status`, `GET /api/events`: Snapshot beziehungsweise SSE mit Position, Navigation und Abdeckung.
+- `GET /api/status`, `GET /api/events`: Snapshot beziehungsweise SSE mit Position, Navigation, Abdeckung und `players: [{id, name, x, y, z}]` (andere Spieler in Reichweite).
 - `GET /api/map`: bisheriger unpersistierter Live-Ausschnitt; `GET /api/block-ids`: Registry-IDs.
 - `GET /api/map/tiles?dimension=0&x=-4&z=-4&width=8&height=8`: Manifest mit Koordinaten, SHA-256 und `empty`-Markierung; X/Z sind Chunkkoordinaten, maximal 8 × 8 Kacheln pro Anfrage.
 - `GET /api/map/tile?dimension=0&x=-1&z=-2`: einzelne Oberflächenkachel mit Live-Markierungen und ETag; bedingte Anfragen ermöglichen HTTP 304.

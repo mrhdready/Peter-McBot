@@ -61,6 +61,8 @@ input { min-width: 0; width: 100%; }
 .pin-tip { transform: translate(-50%, -100%); }
 .pin-pushpin { transform: translate(-25%, -90%); }
 .pin-center { transform: translate(-50%, -50%); }
+/* Players sit in a small round chip so they read as creatures, not markers. */
+.pin-player { padding: .15rem; font-size: 1.05rem; border-radius: 50%; background: rgb(17 24 39 / .8); box-shadow: 0 0 0 1px rgb(255 255 255 / .55); }
 .pin:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .pin-overlay { position: absolute; z-index: 3; margin: 0; max-width: 15rem; padding: .4rem .6rem; font-size: .85rem; white-space: pre-line;
   background: rgb(17 24 39 / .92); border: 1px solid var(--border-strong); border-radius: var(--radius); cursor: pointer; }
