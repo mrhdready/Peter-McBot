@@ -38,12 +38,17 @@ port.on('message', async message => {
       let nextShape = Math.max(0, ...Object.keys(shapes).map(Number)) + 1
       for (const side of Object.keys(panels)) { panelIds[side] = nextShape; shapes[nextShape++] = panels[side] }
       const stateValue = (states: any, name: string) => states?.[name]?.value ?? states?.[name]
+      // 1 lower, 2 upper door half. Bedrock keeps facing and open state on the lower half; the world model resolves upper halves to it.
+      const doorHalf = new Uint8Array(registry.blockStates.length)
       for (const block of Object.values(registry.blocksByName) as any[]) {
         if (!/(?:^|_)door$/.test(block.name)) continue
         for (let id = block.minStateId; id <= block.maxStateId; id++) {
           const states = registry.blockStates[id]?.states
-          const facing = stateValue(states, 'minecraft:cardinal_direction')
-          if (!swing[facing]) continue
+          doorHalf[id] = Number(stateValue(states, 'upper_block_bit')) === 1 ? 2 : 1
+          // Door cardinal_direction keeps the legacy door direction (0 = east) under the generic names (0 = south),
+          // so it is a quarter turn off: a live door reported as "south" blocks walking along X like a vanilla east-facing door.
+          const facing = ({ south: 'east', west: 'south', north: 'west', east: 'north' } as Record<string, string>)[stateValue(states, 'minecraft:cardinal_direction')]
+          if (!facing) continue
           const side = Number(stateValue(states, 'open_bit')) === 1 ? swing[facing][Number(stateValue(states, 'door_hinge_bit')) === 1 ? 1 : 0] : facing
           collisionIds[id] = panelIds[side]; walkFlags[id] = 0
         }
@@ -67,8 +72,8 @@ port.on('message', async message => {
           doorToggle[closed] = open; doorToggle[open] = closed; doorOpen[open] = 1
         }
       }
-      port.postMessage({ type: 'ready', blocks, air: registry.blocksByName.air.defaultState, runtimePairs, walkFlags, collisionIds, collisionShapes: shapes, doorToggle, doorOpen },
-        [runtimePairs.buffer, walkFlags.buffer, collisionIds.buffer, doorToggle.buffer, doorOpen.buffer])
+      port.postMessage({ type: 'ready', blocks, air: registry.blocksByName.air.defaultState, runtimePairs, walkFlags, collisionIds, collisionShapes: shapes, doorToggle, doorOpen, doorHalf },
+        [runtimePairs.buffer, walkFlags.buffer, collisionIds.buffer, doorToggle.buffer, doorOpen.buffer, doorHalf.buffer])
       return
     }
     const payload = Buffer.from(message.payload)

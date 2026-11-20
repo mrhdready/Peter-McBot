@@ -377,9 +377,11 @@ test('unknown waypoint data pauses movement for up to three seconds before repla
 const stateId = (name, props) => registry.blockStates.findIndex(s => s?.name === name &&
   Object.entries(props).every(([key, value]) => (s.states[key]?.value ?? s.states[key]) === value))
 const DIRECTIONS = ['south', 'west', 'north', 'east']
+// Like a Bedrock server, only the lower half carries facing and open state; the upper half keeps default values.
 function placeDoor (world, name, open, direction) {
   for (const upper of [0, 1]) {
-    const id = stateId(name, { open_bit: open ? 1 : 0, upper_block_bit: upper, door_hinge_bit: 0, 'minecraft:cardinal_direction': direction })
+    const id = stateId(name, upper ? { open_bit: 0, upper_block_bit: 1, door_hinge_bit: 0, 'minecraft:cardinal_direction': 'south' }
+      : { open_bit: open ? 1 : 0, upper_block_bit: 0, door_hinge_bit: 0, 'minecraft:cardinal_direction': direction })
     assert.ok(id >= 0, `${name} state exists`)
     world.updateBlock({ x: 2, y: 71 + upper, z: 0 }, hashes.get(id))
   }
@@ -402,6 +404,14 @@ async function walkToDoor (world, step, sent) {
   for (let i = 0; i < 400 && !clicks(sent).length && ['planning', 'moving'].includes(world.navigation.status); i++) step()
   assert.equal(clicks(sent).length, 1, world.navigation.message)
 }
+
+test('a closed door reported as facing south blocks walking along X and opens to a passable panel (verified on a live server)', async t => {
+  const { world } = await setup(t)
+  placeDoor(world, 'wooden_door', false, 'south')
+  assert.equal(world.terrain.transition({ x: 1.5, y: 71, z: .5 }, 2.5, .5), null)
+  placeDoor(world, 'wooden_door', true, 'south')
+  assert.ok(passesDoorBlock(world))
+})
 
 test('routes pass closed wooden doors and fence gates only with door opening enabled; iron doors stay walls', async t => {
   const { world, sent } = await setup(t)

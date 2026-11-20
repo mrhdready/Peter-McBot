@@ -18,6 +18,7 @@ type SurfaceMap = {
   palette: string[]; cells: Array<[number, number | null, boolean] | null>;
   coverage: ReturnType<ChunkWorld['coverage']>; stale: boolean
 }
+const doorKey = (p: Position) => p.x + ':' + p.y + ':' + p.z
 export class WorldError extends Error {
   constructor (message: string, readonly status = 400) { super(message) }
 }
@@ -45,6 +46,7 @@ export class ChunkWorld {
   private collisionShapes: Record<number, Box[]> = {}
   private doorToggle = new Int32Array()
   private doorOpen = new Uint8Array()
+  private doorHalf = new Uint8Array()
   private runtimeIds = new Map<number, number>()
   readonly terrain = new Terrain((x, y, z) => this.collisionAt(x, y, z))
   // When true, routes may pass closed hand-openable doors and fence gates; navigation opens them on the way.
@@ -82,6 +84,7 @@ export class ChunkWorld {
     this.collisionShapes = {}
     this.doorToggle = new Int32Array()
     this.doorOpen = new Uint8Array()
+    this.doorHalf = new Uint8Array()
     this.runtimeIds.clear()
     this.blockedDoors.clear()
     this.mapCache = null
@@ -108,6 +111,7 @@ export class ChunkWorld {
         this.collisionShapes = message.collisionShapes
         this.doorToggle = message.doorToggle
         this.doorOpen = message.doorOpen
+        this.doorHalf = message.doorHalf
         for (const [name, block] of Object.entries(this.blocks!)) {
           for (let id = block.min; id <= block.max; id++) this.stateNames[id] = name
         }
@@ -349,24 +353,49 @@ export class ChunkWorld {
     return section.data?.[layer * 4096 + ((x & 15) << 8) + ((y & 15) << 4) + (z & 15)] ?? this.air
   }
 
-  // A hand-openable door or fence gate in block (x, y, z): whether it is open and its network runtime ID for interaction.
-  doorAt (x: number, y: number, z: number): { open: boolean; runtimeId: number } | null {
+  // Block state at (x, y, z), with an upper door half replaced by the lower half below it, which holds facing and open state.
+  private doorBase (x: number, y: number, z: number): { y: number; id: number } | null {
     const id = this.stateAt(x, y, z)
-    if (id === null || !(this.doorToggle[id] >= 0)) return null
-    const runtimeId = this.runtimeIds.get(id)
-    return runtimeId === undefined ? null : { open: this.doorOpen[id] === 1, runtimeId }
+    if (id === null || this.doorHalf[id] !== 2) return id === null ? null : { y, id }
+    const below = this.stateAt(x, y - 1, z)
+    return below !== null && this.doorHalf[below] === 1 ? { y: y - 1, id: below } : { y, id }
   }
 
-  // The closed, openable door or gate block a player standing at (x, feetY, z) would occupy (feet first, then head),
+  // A hand-openable door or fence gate in block (x, y, z), resolved to its lower half: position, open state and network runtime ID.
+  doorAt (x: number, y: number, z: number): { position: Position; open: boolean; runtimeId: number } | null {
+    const base = this.doorBase(x, y, z)
+    if (!base || !(this.doorToggle[base.id] >= 0)) return null
+    const runtimeId = this.runtimeIds.get(base.id)
+    return runtimeId === undefined ? null : { position: { x, y: base.y, z }, open: this.doorOpen[base.id] === 1, runtimeId }
+  }
+
+  // The closed, openable door or gate a player standing at (x, feetY, z) would occupy (feet first, then head),
   // or null. Disabled door opening and doors blocked for this navigation count as none.
   closedDoorAt (x: number, z: number, feetY: number): Position | null {
     if (!this.openDoors) return null
     const bx = Math.floor(x); const bz = Math.floor(z); const foot = Math.floor(feetY + 1e-4)
     for (const by of [foot, foot + 1]) {
       const door = this.doorAt(bx, by, bz)
-      if (door && !door.open && !this.blockedDoors.has(bx + ':' + by + ':' + bz)) return { x: bx, y: by, z: bz }
+      if (!door) continue
+      return !door.open && !this.blockedDoors.has(doorKey(door.position)) ? door.position : null
     }
     return null
+  }
+
+  // Diagnostics: every door or fence gate block within `radius` columns and feet-1..feet+2, with state ID,
+  // door flags and collision boxes as walked (real) and as planned (doors assumed open).
+  describeDoors (x: number, z: number, feetY: number, radius = 8): string[] {
+    const lines: string[] = []; const foot = Math.floor(feetY + 1e-4)
+    for (let bx = Math.floor(x) - radius; bx <= Math.floor(x) + radius; bx++) for (let bz = Math.floor(z) - radius; bz <= Math.floor(z) + radius; bz++) {
+      for (let by = foot - 1; by <= foot + 2; by++) {
+        const id = this.stateAt(bx, by, bz)
+        if (id === null || !/door$|fence_gate$/.test(this.stateNames[id] ?? '')) continue
+        const boxes = (cell: CollisionCell | null) => cell ? JSON.stringify(cell.boxes.map(b => b.map(n => +n.toFixed(3)))) : 'unbekannt'
+        lines.push(`${this.stateNames[id]} #${id} (${bx}, ${by}, ${bz}) Hälfte ${this.doorHalf[id]} Gegenstück ${this.doorToggle[id]} offen ${this.doorOpen[id]} ` +
+          `Laufen ${boxes(this.collisionAt(bx, by, bz))} Planung ${boxes(this.collisionAt(bx, by, bz, this.openDoors))} gesperrt ${this.blockedDoors.has(bx + ':' + by + ':' + bz)}`)
+      }
+    }
+    return lines
   }
 
   private collisionAt (x: number, y: number, z: number, assumeOpen = false): CollisionCell | null {
@@ -377,7 +406,12 @@ export class ChunkWorld {
     const boxes: Box[] = []; let support = false
     for (let layer = 0; layer < 2; layer++) {
       let id = section.data?.[layer * 4096 + index] ?? this.air
-      if (assumeOpen && layer === 0 && this.doorToggle[id] >= 0 && !this.doorOpen[id] && !this.blockedDoors.has(x + ':' + y + ':' + z)) id = this.doorToggle[id]
+      let baseY = y
+      if (layer === 0 && this.doorHalf[id] === 2) {
+        const base = this.doorBase(x, y, z)
+        if (base) { id = base.id; baseY = base.y }
+      }
+      if (assumeOpen && layer === 0 && this.doorToggle[id] >= 0 && !this.doorOpen[id] && !this.blockedDoors.has(x + ':' + baseY + ':' + z)) id = this.doorToggle[id]
       const shape = this.collisionIds[id]
       if (shape === undefined || shape < 0 || !this.collisionShapes[shape]) return null
       boxes.push(...this.collisionShapes[shape])

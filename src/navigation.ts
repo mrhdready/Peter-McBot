@@ -320,7 +320,15 @@ export class Navigator {
         nav.path = path; nav.remaining = path.length; nav.status = 'moving'; this.planner = null
         this.bestDistance = Infinity; this.progressAt = now
         this.previousWaypoint = { x: p.x, y: p.y - EYE_HEIGHT, z: p.z }
-      } catch (error) { this.fail(error instanceof Error ? error.message : String(error)) }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (message.startsWith('Kein Weg')) {
+          const doors = this.world.describeDoors(p.x, p.z, p.y - EYE_HEIGHT)
+          log(`Kein Weg; Türen/Tore im Umkreis von 8 Blöcken (Türöffnen ${this.world.openDoors ? 'an' : 'aus'}): ${doors.length ? '' : 'keine'}`)
+          for (const line of doors) log('  ' + line)
+        }
+        this.fail(message)
+      }
       return
     }
     const path = this.world.navigation.path
