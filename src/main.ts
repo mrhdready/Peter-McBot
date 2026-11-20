@@ -6,6 +6,7 @@ import { createWebServer } from './web.js'
 import { MapArchive } from './map-archive.js'
 import { PlaceStore } from './places.js'
 import { SkinStore } from './skin.js'
+import { ChatCommands } from './chat-commands.js'
 
 const config = readConfig()
 try { console.log('BDS operator key pin (SHA-256): ' + readFileSync('./data/server-key.sha256', 'utf8').trim()) }
@@ -30,6 +31,8 @@ const mapServer = JSON.stringify([config.host.toLowerCase(), config.port, config
 const archive = new MapArchive('./data/maps', mapServer, config.mapWorldId)
 const places = new PlaceStore('./data/places', mapServer, config.mapWorldId)
 bot.state.onSurfaceTile = tile => archive.observe(tile)
+// "In reach" means within the loaded chunk radius, the only area navigation can plan in.
+if (config.chatCommands) new ChatCommands(bot, places, config.radius * 16, config.username)
 const mapTimer = setInterval(() => { void archive.flush().catch(error => console.error('Map persistence:', error)) }, 5000)
 mapTimer.unref()
 const web = createWebServer(bot, archive, places, skins)

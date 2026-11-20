@@ -3,6 +3,7 @@ import { isIP } from 'node:net'
 export type Config = {
   host: string; port: number; version: string; transport: 'nethernet' | 'raknet';
   username: string; radius: number; webHost: string; webPort: number; iceHost?: string; mapWorldId: string
+  chatCommands: boolean
 }
 
 export function readConfig (env: NodeJS.ProcessEnv = process.env): Config {
@@ -22,7 +23,10 @@ export function readConfig (env: NodeJS.ProcessEnv = process.env): Config {
   const mapWorldId = env.MAP_WORLD_ID?.trim() || 'default'
   if (!/^[a-zA-Z0-9_-]{1,80}$/.test(mapWorldId)) throw new Error('Invalid MAP_WORLD_ID (1..80 letters, digits, underscores or hyphens)')
   if (!/^[a-zA-Z0-9_ ]{1,16}$/.test(username)) throw new Error('Invalid BOT_NAME (1..16 letters, digits, spaces or underscores)')
+  const chatCommands = env.CHAT_COMMANDS?.trim() || 'on'
+  if (chatCommands !== 'on' && chatCommands !== 'off') throw new Error('Invalid CHAT_COMMANDS (on or off)')
   return {
+    chatCommands: chatCommands === 'on',
     host, port: integer('BEDROCK_PORT', 19132, 1, 65535),
     version: env.BEDROCK_VERSION || '1.26.60', transport, username, iceHost, mapWorldId,
     radius: integer('CHUNK_RADIUS', 4, 4, 6),

@@ -11,7 +11,10 @@ export interface BotClient extends EventEmitter {
   viewDistance?: number
   entityId?: unknown
 }
-export type Command = 'connect' | 'disconnect' | 'stop_navigation' | { type: 'navigate'; x: number; z: number }
+/** Who asked for a navigation via chat; navigations from the web UI have none. */
+export type NavigationOrigin = { player: string; label: string }
+export type Command = 'connect' | 'disconnect' | 'stop_navigation' | { type: 'navigate'; x: number; z: number; origin?: NavigationOrigin }
+export type NavigationEnd = (origin: NavigationOrigin | null, status: string, message: string | null) => void
 export type ClientFactory = (config: Config) => BotClient
 const isPosition = (position: Position | undefined): position is Position =>
   Boolean(position) && [position!.x, position!.y, position!.z].every(Number.isFinite)
@@ -29,6 +32,12 @@ export class BotController {
   private stopped = false
   private publishAt = 0
   private previewJob: { step: () => void; cancel: () => void } | null = null
+  private runActive = false
+  private runOrigin: NavigationOrigin | null = null
+  /** Called for every chat or whisper line from another player. */
+  onChat: (sender: string, message: string) => void = () => {}
+  /** Called once when a navigation run ends: arrived, failed, stopped, replaced or lost with the connection. */
+  onNavigationEnd: NavigationEnd = () => {}
 
   constructor (
     private config: Config,
@@ -39,7 +48,8 @@ export class BotController {
 
   enqueue (command: Command) {
     if (this.stopped) return false
-    if (typeof command === 'object' && (!command || command.type !== 'navigate' || ![command.x, command.z].every(n => Number.isInteger(n) && Math.abs(n) <= 30000000))) return false
+    if (typeof command === 'object' && (!command || command.type !== 'navigate' || ![command.x, command.z].every(n => Number.isInteger(n) && Math.abs(n) <= 30000000) ||
+      (command.origin !== undefined && (typeof command.origin?.player !== 'string' || typeof command.origin.label !== 'string')))) return false
     if (command === 'stop_navigation') {
       this.commands = this.commands.filter(command => typeof command === 'string' && command !== 'stop_navigation')
       this.commands.unshift(command)
@@ -62,9 +72,14 @@ export class BotController {
     for (const command of this.commands.splice(0)) {
       if (typeof command === 'object') {
         this.previewJob?.cancel()
-        this.navigator.start(command, this.now())
+        // A new target replaces the running one; report that run as stopped first.
+        if (this.runActive) { this.runActive = false; this.onNavigationEnd(this.runOrigin, 'stopped', 'Neues Ziel gesetzt.') }
+        this.navigator.start({ x: command.x, z: command.z }, this.now())
+        this.runActive = true; this.runOrigin = command.origin ? { ...command.origin } : null
+        this.settleNavigation()
       } else if (command === 'stop_navigation') {
         this.navigator.stop()
+        this.settleNavigation()
       } else if (command === 'disconnect') {
         this.wanted = false
         this.closeClient()
@@ -84,6 +99,7 @@ export class BotController {
       const send = (name: string, params: unknown) => this.client?.queue(name, params)
       try { this.state.requestSubchunks(send, this.now()); this.navigator.step(send, this.now()) }
       catch (error) { this.failed(error instanceof Error ? error.message : String(error)) }
+      this.settleNavigation()
     }
     if (this.now() >= this.publishAt) {
       this.publishAt = this.now() + 1000
@@ -211,20 +227,27 @@ export class BotController {
         const uniqueId = String(packet.entity_id_self)
         for (const [id, player] of this.state.players) if (player.uniqueId === uniqueId) this.state.players.delete(id)
       })
-      // player_list names every player on the server; the bot itself is recognised by unique ID or name.
-      client.on('player_list', (packet: { records?: { type?: string; records?: { uuid?: string; entity_unique_id?: bigint | string; username?: string }[] } }) => {
-        if (!active()) return
-        const records = packet.records?.records ?? []
-        if (packet.records?.type === 'add') {
-          for (const record of records) {
-            if (!record.uuid || String(record.entity_unique_id) === selfUniqueId || record.username === this.config.username) continue
-            this.state.roster.set(String(record.uuid), String(record.username ?? ''))
+      // player_list names every player on the server; each record carries its own add/remove type.
+      // The bot itself is recognised by unique ID or name.
+      client.on('player_list', (packet: { records?: { type?: string; uuid?: string; entity_unique_id?: bigint | string; username?: string }[] }) => {
+        if (!active() || !Array.isArray(packet.records)) return
+        for (const record of packet.records) {
+          if (!record.uuid) continue
+          const uuid = String(record.uuid)
+          if (record.type === 'add') {
+            if (String(record.entity_unique_id) === selfUniqueId || record.username === this.config.username) continue
+            this.state.roster.set(uuid, String(record.username ?? ''))
+          } else if (record.type === 'remove') {
+            this.state.roster.delete(uuid)
+            for (const [id, player] of this.state.players) if (player.uuid === uuid) this.state.players.delete(id)
           }
-        } else if (packet.records?.type === 'remove') {
-          const left = new Set(records.map(record => String(record.uuid)))
-          for (const uuid of left) this.state.roster.delete(uuid)
-          for (const [id, player] of this.state.players) if (left.has(player.uuid)) this.state.players.delete(id)
         }
+      })
+      // Only player-authored lines; the bot's own echo, system and translated messages are ignored.
+      client.on('text', (packet: { type?: string; source_name?: string; message?: string }) => {
+        if (!active() || (packet.type !== 'chat' && packet.type !== 'whisper')) return
+        const sender = String(packet.source_name ?? '')
+        if (sender && sender !== this.config.username && typeof packet.message === 'string') this.onChat(sender, packet.message)
       })
       client.on('server_post_move', (packet: { position: Position }) => {
         if (active()) this.updatePosition(packet.position)
@@ -266,6 +289,25 @@ export class BotController {
     return this.state.searchBlocks(blockId, limit, this.state.position, signal)
   }
 
+  /** Sends a public chat line; returns false while not spawned. */
+  say (message: string) {
+    if (!this.client || this.state.status !== 'spawned') return false
+    this.client.queue('text', {
+      needs_translation: false, category: 'authored', type: 'chat', source_name: this.config.username, message,
+      xuid: '', platform_chat_id: '', has_filtered_message: false
+    })
+    return true
+  }
+
+  /** The chat origin of the running navigation, or null when none runs or it came from the web UI. */
+  get navigationOrigin () { return this.runActive ? this.runOrigin : null }
+
+  private settleNavigation () {
+    if (!this.runActive || ['planning', 'moving'].includes(this.state.navigation.status)) return
+    this.runActive = false
+    this.onNavigationEnd(this.runOrigin, this.state.navigation.status, this.state.navigation.message)
+  }
+
   private failed (message: string) {
     this.closeClient()
     this.state.lastError = message
@@ -293,6 +335,7 @@ export class BotController {
     const old = this.client
     this.client = null
     this.navigator.reset()
+    this.settleNavigation()
     this.state.resetWorld()
     old?.close()
   }

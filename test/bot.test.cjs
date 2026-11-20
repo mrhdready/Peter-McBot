@@ -261,9 +261,9 @@ test('other players are tracked from add, move and remove packets and cleared wi
   assert.deepEqual(bot.state.snapshot().players, [], 'Leaving the range removes the player')
   // Leaving the server removes the player by UUID even without remove_entity.
   client.emit('add_player', { runtime_id: 22n, unique_id: -4294967290n, uuid: 'uuid-bob', username: 'Bob', position: { x: 2, y: 64, z: 2 } })
-  client.emit('player_list', { records: { type: 'add', records_count: 1, records: [{ uuid: 'uuid-bob' }] } })
+  client.emit('player_list', { records: [{ type: 'add', uuid: 'uuid-bob', username: 'Bob' }] })
   assert.equal(bot.state.players.size, 1)
-  client.emit('player_list', { records: { type: 'remove', records_count: 1, records: [{ uuid: 'uuid-bob' }] } })
+  client.emit('player_list', { records: [{ type: 'remove', uuid: 'uuid-bob' }] })
   assert.equal(bot.state.players.size, 0, 'Disconnecting removes the player')
   client.emit('add_player', { runtime_id: 21n, username: 'Steve', position: { x: 1, y: 64, z: 1 } })
   client.emit('change_dimension', { dimension: 1 })
@@ -277,18 +277,21 @@ test('the server player list excludes the bot, marks players in range and is cle
   const client = clients[0]
   client.emit('start_game', { entity_id: -5n, player_position: { x: 0, y: 64, z: 0 }, dimension: 0 })
   client.emit('spawn')
-  client.emit('player_list', { records: { type: 'add', records_count: 4, records: [
-    { uuid: 'uuid-self', entity_unique_id: -5n, username: 'Renamed' },
-    { uuid: 'uuid-name', entity_unique_id: -9n, username: config.username },
-    { uuid: 'uuid-alex', entity_unique_id: -6n, username: 'Alex' },
-    { uuid: 'uuid-bob', entity_unique_id: -7n, username: 'Bob' }
-  ] } })
-  assert.deepEqual(bot.state.snapshot().roster, [{ name: 'Alex', position: null }, { name: 'Bob', position: null }], 'The bot is recognised by unique ID and by name')
+  // Bedrock 1.26 player_list: a plain array whose records each carry their own type.
+  client.emit('player_list', { records: [
+    { type: 'add', uuid: 'uuid-self', entity_unique_id: -5n, username: 'Renamed' },
+    { type: 'add', uuid: 'uuid-name', entity_unique_id: -9n, username: config.username },
+    { type: 'add', uuid: 'uuid-alex', entity_unique_id: -6n, username: 'Alex' }
+  ] })
+  assert.deepEqual(bot.state.snapshot().roster, [{ name: 'Alex', position: null }], 'The bot is recognised by unique ID and by name')
+  // A player joining later arrives as its own packet.
+  client.emit('player_list', { records: [{ type: 'add', uuid: 'uuid-bob', entity_unique_id: -7n, username: 'Bob' }] })
+  assert.deepEqual(bot.state.snapshot().roster, [{ name: 'Alex', position: null }, { name: 'Bob', position: null }], 'A joining player is added')
   client.emit('add_player', { runtime_id: 20n, unique_id: -6n, uuid: 'uuid-alex', username: 'Alex', position: { x: 5, y: 65, z: -3 } })
   assert.deepEqual(bot.state.snapshot().roster[0], { name: 'Alex', position: { x: 5, y: 65, z: -3 } })
   client.emit('remove_entity', { entity_id_self: -6n })
   assert.deepEqual(bot.state.snapshot().roster[0], { name: 'Alex', position: null }, 'Leaving the range keeps the player listed')
-  client.emit('player_list', { records: { type: 'remove', records_count: 1, records: [{ uuid: 'uuid-bob' }] } })
+  client.emit('player_list', { records: [{ type: 'remove', uuid: 'uuid-bob' }] })
   assert.deepEqual(bot.state.snapshot().roster, [{ name: 'Alex', position: null }])
   bot.enqueue('disconnect'); bot.step()
   assert.deepEqual(bot.state.snapshot().roster, [], 'Disconnecting clears the list')
