@@ -6,7 +6,8 @@ const {mapPerformancePanel}=require('../dist/map-performance.js')
 test('performance measurement reports timed draws, frame cadence and CPU deltas without navigation',async()=>{
   const elements=new Map()
   const element=id=>{
-    if(!elements.has(id))elements.set(id,{textContent:'',disabled:false,before(){},scrollIntoView(){}})
+    // Code generated/edited by Claude Opus 5.5: the panel is now appended to #sidebar.
+    if(!elements.has(id))elements.set(id,{textContent:'',disabled:false,append(){},scrollIntoView(){}})
     return elements.get(id)
   }
   let now=1,requests=0,pendingPointer=false

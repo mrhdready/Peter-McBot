@@ -14,8 +14,8 @@ Use Node.js 24 (`engines: >=24 <25`) and pnpm 11.25.0.
 
 ```sh
 pnpm install --frozen-lockfile    # applies patches/ via pnpm-workspace.yaml; install scripts are disabled
-pnpm build                        # tsc: src/ -> dist/
-pnpm test                         # tsc && node --test test/*.test.cjs
+pnpm build                        # tsc: src/ -> dist/, then copies src/ui -> dist/ui
+pnpm test                         # pnpm build && node --test test/*.test.cjs
 pnpm build && node --test test/web.test.cjs                         # one test file
 pnpm build && node --test --test-name-pattern "SSE" test/web.test.cjs  # one test by name
 node --env-file=.env dist/main.js # run locally; `pnpm start` does NOT load .env
@@ -45,7 +45,7 @@ No linter or formatter is configured; `tsc` is the only static check.
 
 **Persistent map (`map-archive.ts`).** Observed *surfaces* (not full chunks) are stored as 16×16 tiles under `data/maps/`. They are keyed by normalized host/port/transport + `MAP_WORLD_ID` + dimension. Writes go to a temp file and are then atomically renamed. Historical tiles are for display only: navigation, preview and block search use **only** the live cache. Merge rules: an incomplete observation never replaces a confirmed surface, while fully known air may replace old blocks. The tile and manifest endpoints use SHA-256 fingerprints and ETags to return 304.
 
-**Web (`web.ts`).** One file holds `node:http` routes, SSE and the entire inline HTML/JS/canvas UI. There is no frontend build. POSTs require `Content-Type: application/json` and reject foreign `Origin` headers. This is not authentication: the UI is meant for a trusted network only. `createWebServer(bot)` without an archive falls back to the legacy unpersisted `/api/map`.
+**Web (`web.ts`, `src/ui/`).** `web.ts` holds the `node:http` routes and SSE. The UI lives in `src/ui/index.html`, `style.css` and `app.js`: a map-centred layout with a sidebar, and below 900px a fixed navigation bar. `pnpm build` copies `src/ui` to `dist/ui`; `web.ts` reads the files once at startup and inlines the style and script into the placeholders `<!-- ui:style -->` and `<!-- ui:script -->`. There is no frontend framework or bundler. Tests extract the **single** inline `<script>` and run it against a fake DOM that offers only `getElementById` and `createElement`, so `app.js` must not use `querySelector`, `classList` or other DOM APIs beyond plain property assignment. Keep the existing element IDs, because tests address them. POSTs require `Content-Type: application/json` and reject foreign `Origin` headers. This is not authentication: the UI is meant for a trusted network only. `createWebServer(bot)` without an archive falls back to the legacy unpersisted `/api/map`.
 
 **Map performance (`map-performance.ts`).** This module provides `/?measure=1` and `/api/map-performance`, which report Node and cgroup counters.
 

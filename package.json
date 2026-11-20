@@ -8,9 +8,9 @@
   },
   "packageManager": "pnpm@11.25.0",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node -e \"require('node:fs').cpSync('src/ui','dist/ui',{recursive:true})\"",
     "start": "node dist/main.js",
-    "test": "tsc && node --test test/*.test.cjs",
+    "test": "pnpm build && node --test test/*.test.cjs",
     "check:compatibility": "node scripts/check-compatibility.cjs",
     "probe:server": "node scripts/probe-server.cjs",
     "smoke:server": "tsc && node scripts/smoke-server.cjs",

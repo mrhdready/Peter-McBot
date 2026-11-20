@@ -25,8 +25,10 @@ export async function mapRuntimeMetrics () {
 export const mapPerformancePanel = `<script>
 (() => {
   const panel = document.createElement('section');
+  // Code generated/edited by Claude Opus 5.5: the map controls are now an overlay, so the panel joins the sidebar.
+  panel.className = 'panel';
   panel.innerHTML = '<h2>Kartenperformance messen</h2><p>10 s Ruhe, 10 s Cursorbewegung, 60 erzwungene Gelände-Neuaufbauten. Keine Navigation. Renderzeiten messen JavaScript-/Canvas-Aufrufe; FPS messen requestAnimationFrame-Abstände, keine garantierten GPU-Presentations.</p><button id="measure-map" type="button">Kartenmessung starten</button><p id="measure-status" role="status">Bereit, sobald die Karte geladen ist.</p><pre id="measure-result" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre>';
-  byId('map-controls').before(panel);
+  byId('sidebar').append(panel);
   let active = null;
   const originalDraw = drawMap;
   drawMap = function () {

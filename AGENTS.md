@@ -4,7 +4,7 @@
 
 - `src/` contains strict TypeScript. `bot.ts` owns the command queue and central 20-Hz heartbeat; `state.ts` and `world.ts` manage position, chunks, and coverage. `chunk-worker.ts` decodes chunks off the main thread.
 - `pathfinder.ts` provides shared planning for previews and navigation. `terrain.ts` handles collisions; `navigation.ts` handles movement. Keep previews free of movement and position changes.
-- `web.ts` contains the HTTP/SSE server and inline HTML, JavaScript, and canvas interface. There is no separate frontend asset pipeline.
+- `web.ts` contains the HTTP/SSE server. The interface lives in `src/ui/` (`index.html`, `style.css`, `app.js`); `pnpm build` copies it to `dist/ui/`, and `web.ts` reads it once at startup and inlines style and script. There is no frontend framework or bundler.
 - `test/*.test.cjs` contains tests; `test/fixtures/` holds captured protocol data. `scripts/` contains compatibility, probe, smoke-test, and deployment helpers. `docs/` contains architecture, compatibility, and publication guidance.
 - `patches/` contains required dependency patches. `deploy/arcane-template/` contains maintained deployment templates; `deploy/arcane/`, `dist/`, and `data/` are generated or local output.
 

@@ -6,7 +6,8 @@ Minecraft-Bedrock-Bot mit Websteuerung für einen vorhandenen Server. TypeScript
 
 - AFK-Verbindung über HTTP-NetherNet; manuelles Verbinden und Trennen, Login-Timeout und begrenzte Wiederverbindung. Keine automatische Verbindung beim Prozessstart.
 - Zentraler Welt-State und 20-Hz-Herzschlag; Chunkdecodierung im Worker. Bekannte und unbekannte Weltdaten bleiben unterscheidbar.
-- Blocksuche mit Registry-Autovervollständigung, X/Y/Z-Koordinaten und anklickbaren Kartenmarkern.
+- Weboberfläche mit der Karte im Zentrum und einer Seitenleiste (Ziel & Navigation, Bot, Blocksuche, Hilfe). Zielwahl und Start ohne Scrollen; auf schmalen Bildschirmen bleibt eine Navigationsleiste unten fixiert. Manuelle Prüfschritte: [docs/TESTPLAN-WEBUI.md](docs/TESTPLAN-WEBUI.md).
+- Blocksuche mit Registry-Autovervollständigung, X/Y/Z-Koordinaten, anklickbaren Kartenmarkern und Zielübernahme aus der Trefferliste.
 - Persistente Draufsicht mit Botposition, leichtem historischem Nebel und Übersicht bis 448 × 448 Blöcke. X/Z-Zielauswahl per Klick oder Tastatur, Wegvorschau ohne Bewegung und laufende Restweg-Anzeige.
 - Langsame Navigation über Vollblöcke, Halbstufen und richtungsabhängige Treppen. Sprünge auf einen Block Höhe und Abstiege bis einen Block. Erst der Start-Button bewegt den Bot.
 - Fehlende Chunkspalten werden nachgeladen; neue Weltdaten, Chunkwechsel und Ankunft aktualisieren die Karte.

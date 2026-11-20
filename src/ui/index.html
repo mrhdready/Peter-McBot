@@ -1,0 +1,74 @@
+<!doctype html>
+<!-- Code generated/edited by Claude Opus 5.5: redesigned layout (map-centred, sidebar, mobile navigation bar). -->
+<html lang="de"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MC Bot</title>
+<!-- ui:style -->
+<header class="topbar">
+<h1>Minecraft AFK-Bot</h1>
+<span class="badge" id="status" title="Verbindungsstatus">Lädt …</span>
+<button id="connection-toggle" type="button">Verbinden</button>
+<p id="feedback" role="status"></p>
+</header>
+<main class="layout">
+<section class="map-area" aria-labelledby="map-heading">
+<h2 id="map-heading" class="visually-hidden">Umgebung von oben</h2>
+<div class="map-stage">
+<div id="map-frame" hidden><canvas id="map-ground" aria-hidden="true"></canvas>
+<canvas id="map" width="144" height="144" tabindex="0" aria-label="Draufsicht der Umgebung, Nord oben. Klick oder Enter wählt das Ziel." aria-describedby="map-info" hidden>Die Umgebungskarte benötigt Canvas. Blockkoordinaten sind auch über die Blocksuche verfügbar.</canvas>
+<div id="map-controls" class="overlay controls" hidden><button id="map-home" type="button">Zum Bot</button><button id="map-zoom-in" type="button" aria-label="Karte vergrößern">+</button><button id="map-zoom-out" type="button" aria-label="Karte verkleinern">−</button><label for="map-dimension" class="visually-hidden">Dimension</label><select id="map-dimension"><option value="0">Oberwelt</option><option value="1">Nether</option><option value="2">Ende</option></select></div>
+<ul class="overlay legend" aria-label="Legende">
+<li><i style="background:#ef4444"></i>Bot</li>
+<li><i style="border:2px solid #fb923c"></i>Ziel</li>
+<li><i style="background:#c084fc"></i>Weg</li>
+<li><i style="background:#22d3ee"></i>Treffer</li>
+<li><i style="background:#202b40"></i>Unbekannt</li>
+<li><i style="background:repeating-linear-gradient(45deg,#d5ac50 0 2px,#858b92 2px 4px)"></i>Daten fehlen oben</li>
+<li><i style="background:#c5ccd3"></i>Historisch</li>
+</ul>
+</div>
+</div>
+<div class="map-meta"><p id="map-status" role="status">Karte verfügbar, sobald Weltdaten geladen sind.</p>
+<p id="map-info">Maus über die Karte bewegen oder Karte fokussieren und Pfeiltasten verwenden, um Block und Koordinaten zu lesen.</p></div>
+</section>
+<aside id="sidebar">
+<section class="panel" aria-labelledby="nav-heading">
+<h2 id="nav-heading">Ziel &amp; Navigation</h2>
+<form id="navigate"><div class="coords"><label>X <input id="target-x" type="number" step="1" min="-30000000" max="30000000" required></label>
+<label>Z <input id="target-z" type="number" step="1" min="-30000000" max="30000000" required></label></div>
+<div class="actions"><button id="nav-start" class="primary" type="submit" disabled>Navigation starten</button><button id="nav-stop" type="button">Stopp</button></div></form>
+<p class="hint">Karte anklicken setzt nur das Ziel. Die Wegvorschau bewegt den Bot nicht; erst „Navigation starten“ bewegt ihn.</p>
+<p id="preview-status" role="status"></p>
+<p id="nav-feedback" role="status"></p>
+<p id="nav-status" role="status">Navigation inaktiv.</p>
+</section>
+<section class="panel" aria-labelledby="bot-heading">
+<h2 id="bot-heading">Bot</h2>
+<dl class="facts"><dt>Position</dt><dd id="position">Unbekannt</dd><dt>Dimension</dt><dd id="dimension">Unbekannt</dd><dt>Chunks</dt><dd id="chunks">0</dd><dt>Herzschlag</dt><dd id="tick">0</dd><dt>Letzter Fehler</dt><dd id="error">—</dd></dl>
+</section>
+<section class="panel" aria-labelledby="search-heading">
+<h2 id="search-heading">Blocksuche</h2>
+<p id="coverage" aria-live="polite">Weltdaten noch unbekannt.</p>
+<form id="search"><label for="block">Block-ID</label><input id="block" name="block" value="minecraft:diamond_ore" list="block-ids" aria-describedby="block-hint" autocomplete="off" required maxlength="110"><datalist id="block-ids"></datalist>
+<p id="block-hint" class="hint" role="status">Blockvorschläge verfügbar, sobald die Registry geladen ist.</p>
+<div class="actions"><label for="limit">Max. Treffer</label><input id="limit" type="number" value="50" min="1" max="100" required>
+<button id="find" type="submit">Suchen</button></div></form>
+<p id="result" role="status"></p>
+<p id="map-hit-info" role="status">Türkis: Treffer der letzten Blocksuche, auch unter der Oberfläche. Marker anklicken oder mit Pfeiltasten und Enter auswählen.</p>
+<div id="map-hit-options" aria-label="Treffer an der ausgewählten Kartenposition"></div>
+<div class="hits"><table><thead><tr><th scope="col">X</th><th scope="col">Y</th><th scope="col">Z</th><th scope="col">Entf.</th><th scope="col"><span class="visually-hidden">Aktion</span></th></tr></thead><tbody id="hits"></tbody></table></div>
+</section>
+<details class="panel help">
+<summary>Hilfe</summary>
+<h3>Karte</h3>
+<p>Nord (−Z) oben, Ost (+X) rechts. Ziehen verschiebt die Karte, Mausrad oder +/− zoomt. Pfeiltasten lesen einzelne Zellen, Umschalt + Pfeiltasten verschiebt die Karte. Klick, Enter oder Leertaste übernimmt die Zelle als Ziel.</p>
+<p>Leicht vernebelte Flächen sind historische Beobachtungen und dienen nur der Orientierung; Navigation, Vorschau und Blocksuche nutzen ausschließlich aktuelle Weltdaten. Die Karte lädt bei neuen Chunks und nach der Ankunft automatisch nach.</p>
+<h3>Navigation</h3>
+<p>Der Bot ermittelt die erreichbare Höhe selbst; die Kartenhöhe ist keine Zielhöhe. Halbstufen und Treppen werden nach ihrer Richtung geprüft, Auf- und Abstiege sind auf einen Block begrenzt. Keine Lücken- oder Flüssigkeitssprünge. Lila zeigt die Vorschau oder den verbleibenden Weg, etwa sekündlich aktualisiert.</p>
+<p>Stopp beendet den Vortrieb; eine laufende Sprung- oder Fallbewegung endet bei der Landung.</p>
+<h3>Blocksuche</h3>
+<p>Treffer werden türkis markiert, auch unter der Oberfläche. „Ziel“ in der Trefferliste übernimmt X/Z als Navigationsziel. Bei Weltänderungen erneut suchen.</p>
+</details>
+</aside>
+</main>
+<!-- ui:script -->
+</html>

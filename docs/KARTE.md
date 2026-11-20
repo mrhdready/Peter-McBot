@@ -20,6 +20,7 @@ Der Server hält höchstens 128 Kacheln im regulären Cache und bis zu 256 ausst
 
 Das Gelände liegt auf einer eigenen Canvas-Ebene. Jede sichtbare Kachel erhält ein wiederverwendbares Raster. Beim vollständigen Neuaufbau wird ein Pixelpuffer mit einem `putImageData` je Kachel übertragen; aufgelöste Blockfarben werden begrenzt zwischengespeichert. Cursor, Bot, Route, Suchtreffer und Ziel werden auf einer separaten transparenten Ebene gezeichnet. Mausbewegungen werden mit `requestAnimationFrame` zusammengefasst; Bewegungen innerhalb derselben Zelle zeichnen nicht erneut.
 
+- Die Karte füllt die Hauptfläche; Zoom, „Zum Bot“ und Dimensionswähler liegen als Overlay oben rechts, die Farblegende unten links. Ausführliche Erklärungen stehen im aufklappbaren Bereich „Hilfe“ der Seitenleiste.
 - Ziehen verschiebt den Ausschnitt; ein Ziehen wählt kein Navigationsziel.
 - Mausrad und +/− ändern den Zoom. „Zum Bot“ aktiviert erneut die Verfolgung der Botposition und öffnet dessen Dimension.
 - Pfeiltasten lesen Zellen; Enter oder Leertaste übernimmt ein Ziel. Umschalt + Pfeiltasten verschiebt den Ausschnitt.
