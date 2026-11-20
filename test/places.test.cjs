@@ -225,4 +225,13 @@ test('map pins show an overlay on hover or first tap and select places as target
   assert.equal(byId('poi-list').children.length, 0)
   assert.ok(!byId('map-pins').children.some(pin => pin.textContent === '📍'), 'A deleted place loses its pin')
   assert.equal(byId('poi-empty').hidden, false)
+  // Code generated/edited by Claude Opus 5.5: arrival removes the target pin; another pending target stays.
+  byId('target-x').value = '5'; byId('target-z').value = '-3'
+  state.navigation = { ...state.navigation, status: 'arrived', target: { x: 9, z: 9 } }; await publish()
+  assert.equal(byId('target-x').value, '5', 'Arrival at another target keeps the chosen one')
+  state.navigation = { ...state.navigation, status: 'moving', target: { x: 5, z: -3 } }; await publish()
+  state.navigation = { ...state.navigation, status: 'arrived' }; await publish()
+  assert.equal(byId('target-x').value, ''); assert.equal(byId('target-z').value, '')
+  assert.ok(!byId('map-pins').children.some(pin => pin.textContent === '📌'), 'The target pin disappears on arrival')
+  assert.ok(byId('map-pins').children.some(pin => pin.textContent === '🤖'))
 })

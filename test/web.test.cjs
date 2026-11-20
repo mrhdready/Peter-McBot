@@ -124,6 +124,8 @@ test('map markers select underground hits, survive map refresh and discard obsol
     if(key==='strokeRect')return (...args)=>rectangles.push({args,color:context.strokeStyle})
     if(key==='beginPath')return ()=>{points=[]}
     if(key==='moveTo'||key==='lineTo')return (...args)=>points.push(args)
+    // Code generated/edited by Claude Opus 5.5: a rounded corner records its waypoint (the curve's control point).
+    if(key==='quadraticCurveTo')return (cx,cz)=>points.push([cx,cz])
     // Code generated/edited by Claude Opus 5.5: records the line width and dash pattern of the route.
     if(key==='stroke')return ()=>strokes.push({color:context.strokeStyle,width:context.lineWidth,dash:target.dash||[],points:points.map(p=>[...p])})
     if(key==='setLineDash')return dash=>{target.dash=dash}
@@ -173,11 +175,11 @@ test('map markers select underground hits, survive map refresh and discard obsol
   const publish = async () => { events.onmessage({ data: JSON.stringify(state) }); await new Promise(resolve => setImmediate(resolve)) }
   const submit = () => byId('search').onsubmit({ preventDefault () {} })
   await publish()
-  assert.deepEqual(strokes.filter(s=>s.color==='#c084fc').at(-1).points,[[16,16],[16.5,16.5],[14.5,16.5],[14.5,19.5]],'Route projects actual world positions into the map')
+  assert.deepEqual(strokes.filter(s=>s.color==='#111111').at(-1).points,[[16,16],[16.5,16.5],[14.5,16.5],[14.5,19.5]],'Route projects actual world positions into the map')
   // Code generated/edited by Claude Opus 5.5: 2 screen pixels at 1 pixel per block; active navigation is solid.
-  assert.equal(strokes.filter(s=>s.color==='#c084fc').at(-1).width,2)
+  assert.equal(strokes.filter(s=>s.color==='#111111').at(-1).width,2)
   // The dash array comes from the vm realm, so compare its length instead of its prototype.
-  assert.equal(strokes.filter(s=>s.color==='#c084fc').at(-1).dash.length,0)
+  assert.equal(strokes.filter(s=>s.color==='#111111').at(-1).dash.length,0)
   const botPin = byId('map-pins').children.find(pin => pin.textContent === '🤖')
   assert.ok(botPin, 'The bot is a pin')
   assert.equal(botPin.style.left, '50%')
@@ -185,14 +187,14 @@ test('map markers select underground hits, survive map refresh and discard obsol
   state.position={x:-.5,y:69.62,z:.5}
   state.navigation.path=state.navigation.path.slice(1);state.navigation.remaining=2
   await publish()
-  assert.deepEqual(strokes.filter(s=>s.color==='#c084fc').at(-1).points,[[15.5,16.5],[14.5,16.5],[14.5,19.5]],'Status updates move the origin and remove completed waypoints')
+  assert.deepEqual(strokes.filter(s=>s.color==='#111111').at(-1).points,[[15.5,16.5],[14.5,16.5],[14.5,19.5]],'Status updates move the origin and remove completed waypoints')
   for(const status of ['planning','stopped','arrived','error']){
     state.navigation.status=status;strokes.length=0;await publish()
-    assert.ok(!strokes.some(s=>s.color==='#c084fc'),'No obsolete route for '+status)
+    assert.ok(!strokes.some(s=>s.color==='#111111'),'No obsolete route for '+status)
   }
   state.navigation.status='moving';await publish()
   strokes.length=0;events.onerror()
-  assert.ok(!strokes.some(s=>s.color==='#c084fc'),'Connection loss hides a potentially stale route')
+  assert.ok(!strokes.some(s=>s.color==='#111111'),'Connection loss hides a potentially stale route')
   await publish()
   // Code generated/edited by Claude Opus 5.5: one toggle sends the command that matches the connection state.
   assert.equal(byId('connection-toggle').textContent, 'Trennen')
@@ -275,7 +277,7 @@ test('map markers select underground hits, survive map refresh and discard obsol
   assert.match(byId('preview-status').textContent,/Wegvorschau: 2 Wegpunkte/)
   assert.equal(JSON.stringify(state.position),beforePreview)
   assert.equal(navigationCount(),beforeClick,'A completed preview still does not submit navigation')
-  assert.deepEqual(strokes.filter(s=>s.color==='#c084fc').at(-1).points.at(-1),[15.5,15.5])
+  assert.deepEqual(strokes.filter(s=>s.color==='#111111').at(-1).points.at(-1),[15.5,15.5])
   const mapCount=()=>requests.filter(r=>r.url==='/api/map').length
   const beforeMap=mapCount()
   state.navigation.status='arrived';await publish()
@@ -292,7 +294,7 @@ test('map markers select underground hits, survive map refresh and discard obsol
   await new Promise(resolve=>setTimeout(resolve,300))
   finishPreview({ok:true,json:async()=>({session:1,origin:{...state.position},path:[{x:999,y:0,z:999}]})})
   await new Promise(resolve=>setImmediate(resolve))
-  assert.deepEqual(strokes.filter(s=>s.color==='#c084fc').at(-1).points.at(-1),[13.5,15.5],'Late preview cannot overwrite the latest target')
+  assert.deepEqual(strokes.filter(s=>s.color==='#111111').at(-1).points.at(-1),[13.5,15.5],'Late preview cannot overwrite the latest target')
   byId('target-x').value='-1';byId('target-x').oninput()
   await byId('navigate').onsubmit({ preventDefault () {} })
   assert.deepEqual(JSON.parse(requests.filter(r => r.url === '/api/navigate').at(-1).options.body), { x: -1, z: -1 })
@@ -312,7 +314,7 @@ test('map markers select underground hits, survive map refresh and discard obsol
   assert.equal(byId('hits').children.length, 0, 'Late response cannot restore hits from an old session')
   assert.equal(byId('find').disabled, false)
   assert.equal(canvas.hidden, true)
-  assert.ok(!strokes.slice(-1).some(s=>s.color==='#c084fc'))
+  assert.ok(!strokes.slice(-1).some(s=>s.color==='#111111'))
 })
 
 test('navigation API bounds JSON and accepts X/Z only; start and stop use the tick queue', async t => {

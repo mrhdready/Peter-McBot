@@ -38,8 +38,8 @@ Kernfall der Neugestaltung: **kein Scrollen der Seite** zwischen Zielwahl und St
 | # | Schritt | Erwartung | Ergebnis |
 |---|---|---|---|
 | 3.1 | Fenster ca. 1400 × 850 | Karte links, Seitenleiste rechts, Seite selbst scrollt nicht | |
-| 3.2 | Auf die Karte klicken | X/Z im Panel „Ziel & Navigation“ gesetzt, 📌 auf der Karte, dünne gestrichelte lila Vorschau erscheint; Bot bewegt sich **nicht** | |
-| 3.3 | „Navigation starten“ (sichtbar ohne Scrollen) | Bot läuft los, Status „Unterwegs …“, durchgezogener lila Restweg | |
+| 3.2 | Auf die Karte klicken | X/Z im Panel „Ziel & Navigation“ gesetzt, 📌 auf der Karte, dünne gestrichelte dunkle Vorschau erscheint; Bot bewegt sich **nicht** | |
+| 3.3 | „Navigation starten“ (sichtbar ohne Scrollen) | Bot läuft los, Status „Unterwegs …“, durchgezogener dunkler Restweg mit abgerundeten Ecken | |
 | 3.4 | „Stopp“ | Bot hält an, Status „Gestoppt“ | |
 | 3.5 | X/Z manuell eintippen | Vorschau aktualisiert sich, 📌 springt mit | |
 | 3.6 | Mehrfach zoomen | Linie und Pins behalten ihre Bildschirmgröße; Pinspitze sitzt auf der Zielzelle | |

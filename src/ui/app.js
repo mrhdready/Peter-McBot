@@ -339,13 +339,18 @@ function drawMap () {
   const route = !archiveEnabled || mapDimension === dimensionNumber(lastDimension) ? mapNavigation || preview : null;
   if (route && route.session === map.coverage.session && route.path.length && botPosition) {
     const origin = route.origin || botPosition;
+    // Code generated/edited by Claude Opus 5.5: thin dark line of constant screen width; dashed preview, solid active navigation.
+    // Corners are rounded for display only: each waypoint is a curve control point, the curve passes through segment midpoints.
+    const points = route.path.map(point => [point.x - map.x, point.z - map.z]);
     context.beginPath(); context.moveTo(origin.x - map.x, origin.z - map.z);
-    for (const point of route.path) context.lineTo(point.x - map.x, point.z - map.z);
-    // Code generated/edited by Claude Opus 5.5: thin line of constant screen width; dashed preview, solid active navigation.
+    for (let i = 0; i < points.length - 1; i++) {
+      context.quadraticCurveTo(points[i][0], points[i][1], (points[i][0] + points[i + 1][0]) / 2, (points[i][1] + points[i + 1][1]) / 2);
+    }
+    context.lineTo(points.at(-1)[0], points.at(-1)[1]);
     const pixel = map.width / Math.max(1, canvas.getBoundingClientRect().width);
     context.lineJoin = 'round'; context.lineCap = 'round';
     context.setLineDash(route === preview ? [6 * pixel, 4 * pixel] : []);
-    context.strokeStyle = '#c084fc'; context.lineWidth = 2 * pixel; context.stroke();
+    context.strokeStyle = '#111111'; context.lineWidth = 2 * pixel; context.stroke();
     context.setLineDash([]);
   }
   if (searchResult && (!archiveEnabled || mapDimension === dimensionNumber(lastDimension)) && searchResult.coverage.session === map.coverage.session) {
@@ -848,6 +853,11 @@ events.onmessage = event => {
   byId('error').textContent = state.lastError || '—';
   const coverage = state.coverage;
   const nextMapContext = JSON.stringify([coverage?.session,latestRevision,coverage?.knownSubchunks,state.position ? Math.floor(state.position.x/16) : null,state.position ? Math.floor(state.position.z/16) : null]);
+  // Code generated/edited by Claude Opus 5.5: the target pin disappears once the bot arrives at that target.
+  if (navigation?.status === 'arrived' && previousNavigationStatus !== 'arrived' && navigation.target &&
+      byId('target-x').value === String(navigation.target.x) && byId('target-z').value === String(navigation.target.z)) {
+    byId('target-x').value = ''; byId('target-z').value = ''; previewWanted = false; cancelPreview();
+  }
   if (nextMapContext !== mapContext || (navigation?.status === 'arrived' && previousNavigationStatus !== 'arrived')) mapDirty = true;
   mapContext = nextMapContext; previousNavigationStatus = navigation?.status;
   if (worldSession !== coverage?.session) {

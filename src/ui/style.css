@@ -53,7 +53,7 @@ input { min-width: 0; width: 100%; }
   display: grid; grid-template-columns: repeat(2, auto); gap: .1rem .8rem; }
 .legend i { display: inline-block; width: .75rem; height: .75rem; margin-right: .35rem; vertical-align: -.1rem; border-radius: 2px; border: 1px solid rgb(255 255 255 / .3); }
 /* Code generated/edited by Claude Opus 5.5: map pins, pin overlay and the places panel. */
-.legend .legend-line { height: 2px; border: 0; border-radius: 0; background: #c084fc; vertical-align: .2rem; }
+.legend .legend-line { height: 2px; border: 0; border-radius: 0; background: #111111; box-shadow: 0 0 0 1px rgb(255 255 255 / .55); vertical-align: .2rem; }
 .legend-pin { display: inline-block; width: .75rem; margin-right: .35rem; text-align: center; }
 #map-pins { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
 .pin { position: absolute; margin: 0; padding: 0; border: 0; border-radius: 0; background: none; font-size: 1.5rem; line-height: 1;
