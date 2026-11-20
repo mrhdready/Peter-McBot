@@ -63,7 +63,8 @@ test('central route snapshots shrink with movement and clear on replan, stop and
   assert.deepEqual(snapshot.navigation.path.at(-1),{x:4.5,y:71,z:.5})
   snapshot.navigation.path[0].x=999
   assert.notEqual(world.navigation.path[0].x,999,'Snapshot cannot mutate the route used by the bot')
-  for(let i=0;i<40;i++)step()
+  for(let i=0;i<8;i++)step()
+  assert.equal(world.navigation.status,'moving')
   assert.ok(world.navigation.path.length<snapshot.navigation.path.length)
   navigator.serverCorrection({...world.position,z:world.position.z+.8},100n,{x:0,y:-.0784,z:0},true)
   assert.equal(world.navigation.status,'planning')
@@ -79,7 +80,7 @@ test('central route snapshots shrink with movement and clear on replan, stop and
   assert.equal(world.navigation.status,'error')
 })
 
-test('flat A* detours around solid blocks; inputs are slow, ticked and serializable for protocol 2225', async t => {
+test('flat A* detours around solid blocks; inputs are bounded, ticked and serializable for protocol 2225', async t => {
   const { world, navigator, step, sent } = await setup(t)
   world.updateBlock({ x: 1, y: 71, z: 0 }, hash('stone'))
   world.updateBlock({ x: 1, y: 72, z: 0 }, hash('stone'))
@@ -99,7 +100,7 @@ test('flat A* detours around solid blocks; inputs are slow, ticked and serializa
     const { name, params } = sent[i]
     assert.equal(name, 'player_auth_input')
     assert.equal(params.tick, BigInt(i + 1))
-    assert.ok(params.move_vector.z <= .30001)
+    assert.ok(params.move_vector.z <= 1.00001)
     assert.ok(world.canStandAt(params.position.x, params.position.z, 71), 'Every swept step stays in known free space')
     assert.ok(!params.input_data.some(flag => /jump|sprint|fly/.test(flag)))
     assert.ok(serializer.createPacketBuffer({ name, params }).length > 0)
@@ -149,7 +150,7 @@ test('stop sends one neutral input and no later movement; unsafe targets send no
 test('obstacles replan; authoritative corrections stop height changes and old ticks cannot overwrite state', async t => {
   const { world, navigator, step, sent } = await setup(t)
   navigator.start({ x: 4, z: 0 }, 0)
-  for (let i = 0; i < 10; i++) step()
+  for (let i = 0; i < 3; i++) step()
   world.updateBlock({ x: 2, y: 71, z: 0 }, hash('stone'))
   for (let i = 0; i < 300 && ['planning','moving'].includes(world.navigation.status); i++) step()
   assert.ok(world.navigation.replans > 0)
@@ -285,7 +286,8 @@ test('a jump is still planned when it is the only way to the target', async t =>
 
 test('small on-path server corrections are accepted without replanning', async t => {
   const { world, navigator, step } = await setup(t)
-  navigator.start({ x: 4, z: 0 }, 0)
+  for (let x = 6; x <= 12; x++) for (let z = -5; z <= 5; z++) world.updateBlock({ x, y: 70, z }, hash('stone'))
+  navigator.start({ x: 10, z: 0 }, 0)
   for (let i = 0; i < 30 && world.navigation.status === 'planning'; i++) step()
   for (let i = 0; i < 10; i++) step()
   for (let tick = 1; tick <= 5; tick++) {
@@ -296,6 +298,46 @@ test('small on-path server corrections are accepted without replanning', async t
   assert.equal(world.navigation.replans, 0)
   for (let i = 0; i < 600 && ['planning', 'moving'].includes(world.navigation.status); i++) step()
   assert.equal(world.navigation.status, 'arrived', world.navigation.message)
+})
+
+/* Walking speed: pass through straight waypoints, round safe turns, stay careful next to edges. */
+const horizontalSteps = sent => sent.slice(1).map((p, i) => ({ from: sent[i].params.position,
+  length: Math.hypot(p.params.position.x - sent[i].params.position.x, p.params.position.z - sent[i].params.position.z) }))
+
+test('straight, level, edge-free segments keep walking speed through intermediate waypoints', async t => {
+  const { world, navigator, step, sent } = await setup(t)
+  for (let x = 6; x <= 12; x++) for (let z = -5; z <= 5; z++) world.updateBlock({ x, y: 70, z }, hash('stone'))
+  navigator.start({ x: 10, z: 0 }, 0)
+  let ticks = 0
+  for (; ticks < 300 && ['planning', 'moving'].includes(world.navigation.status); ticks++) step()
+  assert.equal(world.navigation.status, 'arrived', world.navigation.message)
+  assert.ok(Math.hypot(world.position.x - 10.5, world.position.z - .5) < .08)
+  assert.ok(ticks < 80, `Ten blocks took ${ticks} ticks`)
+  const steps = horizontalSteps(sent)
+  assert.ok(Math.max(...steps.map(s => s.length)) > .2, 'Reaches walking speed')
+  const middle = steps.filter(s => s.from.x > 2.5 && s.from.x < 8.5)
+  assert.ok(middle.length > 10 && middle.every(s => s.length > .15), 'No braking at intermediate waypoints')
+  assert.ok(sent.every(p => p.params.move_vector.z <= 1.00001 && !p.params.input_data.some(flag => /sprint|jump/.test(flag))))
+})
+
+test('level turns on safe ground slow down without stopping', async t => {
+  const { world, navigator, step, sent } = await setup(t)
+  navigator.start({ x: 3, z: 3 }, 0)
+  for (let i = 0; i < 300 && ['planning', 'moving'].includes(world.navigation.status); i++) step()
+  assert.equal(world.navigation.status, 'arrived', world.navigation.message)
+  assert.ok(Math.hypot(world.position.x - 3.5, world.position.z - 3.5) < .08)
+  const travel = horizontalSteps(sent).slice(3).filter(s => Math.hypot(s.from.x - 3.5, s.from.z - 3.5) > 1)
+  assert.ok(travel.length && travel.every(s => s.length > .05), 'Turns keep moving instead of stopping')
+})
+
+test('a one-block bridge between drops keeps the careful speed', async t => {
+  const { world, navigator, step, sent } = await setup(t)
+  for (let x = 1; x <= 3; x++) for (const z of [-1, 1]) world.updateBlock({ x, y: 70, z }, hash('air'))
+  navigator.start({ x: 4, z: 0 }, 0)
+  for (let i = 0; i < 600 && ['planning', 'moving'].includes(world.navigation.status); i++) step()
+  assert.equal(world.navigation.status, 'arrived', world.navigation.message)
+  assert.ok(horizontalSteps(sent).every(s => s.length <= .0601), 'No walking speed next to a drop')
+  assert.ok(sent.every(p => p.params.move_vector.z <= .30001))
 })
 
 test('unknown waypoint data pauses movement for up to three seconds before replanning', async t => {

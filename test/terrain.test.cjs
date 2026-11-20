@@ -116,7 +116,7 @@ test('X/Z navigation jumps once onto a full block and serializes protocol 2225 j
   assert.equal(sent.filter(p=>p.params.input_data.includes('jump_released_raw')).length,1)
   const serializer=require('bedrock-protocol/src/transforms/serializer').createSerializer('1.26.60')
   for(const {name,params} of sent){
-    assert.ok(params.move_vector.z<=.30001)
+    assert.ok(params.move_vector.z<=1.00001)
     assert.ok(!params.input_data.some(flag=>/sprint|fly/.test(flag)))
     assert.ok(serializer.createPacketBuffer({name,params}).length)
   }

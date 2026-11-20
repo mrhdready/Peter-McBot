@@ -6,6 +6,8 @@ export type Motion = { position: Feet; onGround: boolean; velocityY: number; dx:
 export const STEP_HEIGHT = .5625
 export const MAX_DROP = 1
 export const JUMP_SPEED = .42
+// Largest horizontal move per tick accepted by `move`: vanilla walking is about .216, sprinting about .28.
+export const MAX_HORIZONTAL_STEP = .3
 const EPS = 1e-4
 const playerBox = (p: Feet): Box => [p.x - .3, p.y, p.z - .3, p.x + .3, p.y + 1.8, p.z + .3]
 const overlap = (a: Box, b: Box, axis: number) => a[axis + 3] > b[axis] + EPS && a[axis] < b[axis + 3] - EPS
@@ -87,7 +89,7 @@ export class Terrain {
   }
 
   move (from: Feet, dx: number, dz: number, velocityY: number, onGround: boolean, fallFrom: number): Motion | null {
-    if (![from.x, from.y, from.z, dx, dz, velocityY, fallFrom].every(Number.isFinite) || Math.hypot(dx, dz) > .15 || velocityY > JUMP_SPEED + EPS || velocityY < -1) return null
+    if (![from.x, from.y, from.z, dx, dz, velocityY, fallFrom].every(Number.isFinite) || Math.hypot(dx, dz) > MAX_HORIZONTAL_STEP || velocityY > JUMP_SPEED + EPS || velocityY < -1) return null
     const a = playerBox(from)
     const obstacles = this.collect([a[0] + Math.min(0, dx), from.y + velocityY - EPS, a[2] + Math.min(0, dz),
       a[3] + Math.max(0, dx), a[4] + Math.max(velocityY, onGround ? STEP_HEIGHT : 0), a[5] + Math.max(0, dz)])

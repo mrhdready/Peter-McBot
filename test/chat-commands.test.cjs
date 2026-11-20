@@ -49,9 +49,12 @@ test('player chat lines reach the handler; own, system and translated lines do n
   client.emit('text', { type: 'chat', source_name: 'Alex', message: 'hi' })
   client.emit('text', { type: 'whisper', source_name: 'Bea', message: 'psst' })
   client.emit('text', { type: 'chat', source_name: 'Peter Bot', message: 'echo' })
+  // The server echoes the bot's own lines with a trailing reset code.
+  client.emit('text', { type: 'chat', source_name: 'Peter Bot§r', message: 'echo' })
+  client.emit('text', { type: 'chat', source_name: 'Cleo§r', message: 'yo' })
   client.emit('text', { type: 'system', message: 'Server restart' })
   client.emit('text', { type: 'translation', message: 'chat.type.text', parameters: ['Alex', 'x'] })
-  assert.deepEqual(seen, [['Alex', 'hi'], ['Bea', 'psst']])
+  assert.deepEqual(seen, [['Alex', 'hi'], ['Bea', 'psst'], ['Cleo', 'yo']])
   assert.equal(bot.say('Moin'), true)
   assert.deepEqual(client.sent.at(-1), ['text', { needs_translation: false, category: 'authored', type: 'chat', source_name: 'Peter Bot', message: 'Moin',
     xuid: '', platform_chat_id: '', has_filtered_message: false }])

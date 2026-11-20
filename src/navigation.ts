@@ -17,6 +17,28 @@ function segmentDistance (p: Target, a: Target, b: Target) {
   const t = length > 0 ? Math.max(0, Math.min(1, ((p.x - a.x) * lx + (p.z - a.z) * lz) / length)) : 0
   return Math.hypot(p.x - (a.x + t * lx), p.z - (a.z + t * lz))
 }
+const GROUND_DAMPING = .546
+const GROUND_FACTOR = .098
+// Steady ground speed with full forward input, as in vanilla walking: about .216 blocks per tick (4.3 blocks/s).
+const WALK_SPEED = GROUND_FACTOR / (1 - GROUND_DAMPING)
+const CORNER_SPEED = WALK_SPEED / 3
+// Target speed shrinks by this factor per block of remaining distance; slower than friction, so braking needs no reverse input.
+const BRAKE_RATE = .35
+const CORNER_RADIUS = .2
+// Speed and input limit for steps, jumps, drops and airborne ticks, unchanged from the original slow movement.
+const CAREFUL_SPEED = .06
+const CAREFUL_INPUT_LIMIT = .3
+const LOOKAHEAD = 8
+// pass: straight, level and edge-free, keep walking speed; corner: level turn on safe ground; stop: brake to the waypoint.
+type WaypointKind = 'pass' | 'corner' | 'stop'
+// True once p has passed waypoint b on the line from a to b and is still within the same row of blocks.
+function crossed (p: Target, a: Target, b: Target) {
+  const lx = b.x - a.x; const lz = b.z - a.z; const length = Math.hypot(lx, lz)
+  if (length < .01) return true
+  const along = ((p.x - b.x) * lx + (p.z - b.z) * lz) / length
+  const lateral = Math.abs((p.x - b.x) * lz - (p.z - b.z) * lx) / length
+  return along >= 0 && lateral <= .5
+}
 
 export class Navigator {
   private planner: RoutePlanner | null = null
@@ -148,6 +170,39 @@ export class Navigator {
     return true
   }
 
+  // A blocked or unknown next waypoint makes this one a stop, so the bot brakes before the replan instead of running into it.
+  private waypointKind (previous: Position, waypoint: Position, next: Position | undefined): WaypointKind {
+    if (!next || !this.world.canStandAt(next.x, next.z, next.y) || Math.abs(previous.y - waypoint.y) > 1e-4 || Math.abs(next.y - waypoint.y) > 1e-4 || this.nearDrop(waypoint)) return 'stop'
+    const ix = waypoint.x - previous.x; const iz = waypoint.z - previous.z; const inLength = Math.hypot(ix, iz)
+    const ox = next.x - waypoint.x; const oz = next.z - waypoint.z; const outLength = Math.hypot(ox, oz)
+    if (inLength < .01 || outLength < .01) return 'corner'
+    return (ix * ox + iz * oz) / (inLength * outLength) >= .999 ? 'pass' : 'corner'
+  }
+
+  // True when any of the eight columns around p is a drop, a hole or unknown at p's feet height.
+  private nearDrop (p: Position) {
+    const bx = Math.floor(p.x); const bz = Math.floor(p.z)
+    for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+      if ((dx || dz) && this.world.terrain.dropHazard(bx + dx, bz + dz, p.y)) return true
+    }
+    return false
+  }
+
+  // Target speed is the lowest allowed speed at any upcoming waypoint plus a braking margin for the distance to it.
+  // The bot steers at the first waypoint it must not pass through, which lies on the same straight line.
+  private speedProfile (p: Position, d: number) {
+    const path = this.world.navigation.path
+    let previous = this.previousWaypoint!; let travelled = d; let speed = WALK_SPEED; let aim = path[0]
+    for (let i = 0; i < Math.min(path.length, LOOKAHEAD); i++) {
+      const kind = this.waypointKind(previous, path[i], path[i + 1])
+      speed = Math.min(speed, (kind === 'pass' ? WALK_SPEED : kind === 'corner' ? CORNER_SPEED : 0) + BRAKE_RATE * travelled)
+      if (kind !== 'pass' || travelled > WALK_SPEED / BRAKE_RATE) break
+      aim = path[i + 1]
+      travelled += distance(path[i], path[i + 1]); previous = path[i]
+    }
+    return { speed, aim }
+  }
+
   private move (send: Send, dx: number, dz: number, input: number, jump = false) {
     const p = this.world.position!
     const damping = this.grounded ? .546 : .91
@@ -197,40 +252,53 @@ export class Navigator {
       } catch (error) { this.fail(error instanceof Error ? error.message : String(error)) }
       return
     }
-    const waypoint = this.world.navigation.path[0]
-    if (!waypoint) return
+    const path = this.world.navigation.path
+    if (!path[0]) return
     if (!this.world.canStandAt(p.x, p.z, p.y - EYE_HEIGHT) && this.world.terrain.surfaceAt(p.x, p.z, p.y - EYE_HEIGHT + .0001, this.fallFrom - MAX_DROP) === null) return this.fail('Aktuelle Position ist nicht mehr sicher begehbar; Navigation gestoppt.')
-    // Unknown (e.g. reloading) waypoint data: stand still and wait briefly instead of replanning at once.
-    if (this.grounded && !this.world.terrain.isKnownAt(waypoint.x, waypoint.z, waypoint.y)) {
-      if (this.waitingSince === null) {
-        this.waitingSince = now; this.velocity = { x: 0, z: 0 }; this.neutral = this.inputActive
-        log(`Weltdaten am Wegpunkt (${fixed(waypoint.x)}, ${fixed(waypoint.y)}, ${fixed(waypoint.z)}) unbekannt; warte bis zu ${UNKNOWN_WAYPOINT_WAIT_MS / 1000} s.`)
+    // Waypoints the bot passes through or rounds are consumed in the same tick, so it keeps sending input without a pause.
+    for (;;) {
+      const waypoint = path[0]
+      // Unknown (e.g. reloading) waypoint data: stand still and wait briefly instead of replanning at once.
+      if (this.grounded && !this.world.terrain.isKnownAt(waypoint.x, waypoint.z, waypoint.y)) {
+        if (this.waitingSince === null) {
+          this.waitingSince = now; this.velocity = { x: 0, z: 0 }; this.neutral = this.inputActive
+          log(`Weltdaten am Wegpunkt (${fixed(waypoint.x)}, ${fixed(waypoint.y)}, ${fixed(waypoint.z)}) unbekannt; warte bis zu ${UNKNOWN_WAYPOINT_WAIT_MS / 1000} s.`)
+        }
+        if (now - this.waitingSince < UNKNOWN_WAYPOINT_WAIT_MS) return
+        return this.replan('Weltdaten am Weg nach Wartezeit weiterhin nicht verfügbar.')
       }
-      if (now - this.waitingSince < UNKNOWN_WAYPOINT_WAIT_MS) return
-      return this.replan('Weltdaten am Weg nach Wartezeit weiterhin nicht verfügbar.')
-    }
-    if (this.waitingSince !== null) { this.waitingSince = null; this.progressAt = now; this.bestDistance = Infinity }
-    if (!this.world.canStandAt(waypoint.x, waypoint.z, waypoint.y)) return this.replan('Weg blockiert oder Weltdaten nicht mehr verfügbar.')
-    const d = distance(p, waypoint)
-    if (d < .08 && this.grounded && Math.abs(p.y - EYE_HEIGHT - waypoint.y) < .08) {
-      this.world.navigation.path.shift(); nav.remaining = this.world.navigation.path.length
+      if (this.waitingSince !== null) { this.waitingSince = null; this.progressAt = now; this.bestDistance = Infinity }
+      if (!this.world.canStandAt(waypoint.x, waypoint.z, waypoint.y)) return this.replan('Weg blockiert oder Weltdaten nicht mehr verfügbar.')
+      const kind = this.waypointKind(this.previousWaypoint!, waypoint, path[1])
+      const d = distance(p, waypoint)
+      const onWaypointLevel = this.grounded && Math.abs(p.y - EYE_HEIGHT - waypoint.y) < .08
+      const reached = onWaypointLevel && (kind === 'stop' ? d < .08 : kind === 'corner' ? d < CORNER_RADIUS : crossed(p, this.previousWaypoint!, waypoint))
+      if (!reached) break
+      path.shift(); nav.remaining = path.length
       this.bestDistance = Infinity; this.progressAt = now
       this.previousWaypoint = { ...waypoint }; this.stalledReplans = 0
-      if (!this.world.navigation.path.length) {
+      if (!path.length) {
         this.stop('Ziel laut Client-Prognose erreicht.'); nav.status = 'arrived'
       }
-      return
+      if (kind === 'stop' || !path.length) return
     }
+    const waypoint = path[0]
+    const d = distance(p, waypoint)
     const remaining = d + Math.abs(p.y - EYE_HEIGHT - waypoint.y)
     if (remaining < this.bestDistance - .025) { this.bestDistance = remaining; this.progressAt = now }
     if (now - this.progressAt > 5000) return this.fail('Kein ausreichender Fortschritt; Navigation gestoppt.')
-    const speed = Math.min(.06, d * .35)
-    const damping = this.grounded ? .546 : .91
-    const factor = this.grounded ? .098 : .0196
-    let ax = (d > .0001 ? (waypoint.x - p.x) / d * speed : 0) - this.velocity.x * damping
-    let az = (d > .0001 ? (waypoint.z - p.z) / d * speed : 0) - this.velocity.z * damping
+    // Steps, jumps, drops and segments next to an edge keep the slow, careful approach; only safe level segments use walking speed.
+    const previous = this.previousWaypoint!
+    const careful = !this.grounded || Math.abs(previous.y - waypoint.y) > 1e-4 || this.nearDrop(previous) || this.nearDrop(waypoint)
+    const { speed, aim } = careful ? { speed: Math.min(CAREFUL_SPEED, d * BRAKE_RATE), aim: waypoint } : this.speedProfile(p, d)
+    const da = distance(p, aim)
+    const damping = this.grounded ? GROUND_DAMPING : .91
+    const factor = this.grounded ? GROUND_FACTOR : .0196
+    const limit = factor * (careful ? CAREFUL_INPUT_LIMIT : 1)
+    let ax = (da > .0001 ? (aim.x - p.x) / da * speed : 0) - this.velocity.x * damping
+    let az = (da > .0001 ? (aim.z - p.z) / da * speed : 0) - this.velocity.z * damping
     const acceleration = Math.hypot(ax, az)
-    if (acceleration > factor * .3) { ax *= factor * .3 / acceleration; az *= factor * .3 / acceleration }
+    if (acceleration > limit) { ax *= limit / acceleration; az *= limit / acceleration }
     const velocity = { x: this.velocity.x * damping + ax, z: this.velocity.z * damping + az }
     this.yaw = Math.atan2(-ax, az) * 180 / Math.PI
     const needsJump = this.grounded && d <= 1.01 && waypoint.y > p.y - EYE_HEIGHT + STEP_HEIGHT + .0001 &&

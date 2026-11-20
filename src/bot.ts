@@ -252,7 +252,8 @@ export class BotController {
       // Only player-authored lines; the bot's own echo, system and translated messages are ignored.
       client.on('text', (packet: { type?: string; source_name?: string; message?: string }) => {
         if (!active() || (packet.type !== 'chat' && packet.type !== 'whisper')) return
-        const sender = String(packet.source_name ?? '')
+        // Servers append formatting codes such as §r to sender names, also to the echo of the bot's own lines.
+        const sender = String(packet.source_name ?? '').replace(/§./g, '').trim()
         if (sender && sender !== this.config.username && typeof packet.message === 'string') {
           this.logChat(packet.type, sender, packet.message)
           this.onChat(sender, packet.message)
