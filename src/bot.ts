@@ -4,6 +4,7 @@ import { WorldState, type Position } from './state.js'
 import { Navigator } from './navigation.js'
 import { RoutePlanner, type PreviewRoute, type Target } from './pathfinder.js'
 import { WorldError } from './world.js'
+import type { ContainerWindow, Inventory, TransferStep } from './inventory.js'
 
 export interface BotClient extends EventEmitter {
   queue(name: string, params: unknown): void
@@ -12,7 +13,7 @@ export interface BotClient extends EventEmitter {
   entityId?: unknown
 }
 /** Who asked for a navigation via chat; navigations from the web UI have none. */
-export type NavigationOrigin = { player: string; label: string; give?: number }
+export type NavigationOrigin = { player: string; label: string; give?: number; chest?: number }
 export type Command = 'connect' | 'disconnect' | 'stop_navigation' | { type: 'navigate'; x: number; z: number; origin?: NavigationOrigin }
 export type NavigationEnd = (origin: NavigationOrigin | null, status: string, message: string | null) => void
 export type ClientFactory = (config: Config) => BotClient
@@ -23,6 +24,23 @@ const isPosition = (position: Position | undefined): position is Position =>
   Boolean(position) && [position!.x, position!.y, position!.z].every(Number.isFinite)
 const isInventoryWindow = (id: string | number | undefined) => id === 'inventory' || id === 0
 type DropJob = { name: string; count: number; toward: Position; resolve: (dropped: number) => void; reject: (error: Error) => void }
+/** Why a chest visit ended: the transfer is complete, the source ran out, the target is full, or something interrupted it. */
+export type ChestStop = 'done' | 'source_empty' | 'target_full' | 'not_opened' | 'rejected' | 'timeout' | 'closed' | 'cancelled'
+export type ChestResult = { opened: boolean; size: number; moved: number; stop: ChestStop }
+/** Decides the next move while the chest is open; called again after every confirmed move. */
+export type ChestPlanner = (inventory: Inventory, window: ContainerWindow, moved: number) => TransferStep
+type ChestJob = {
+  chest: Position; next: ChestPlanner; phase: 'click' | 'opening' | 'content' | 'move' | 'waiting' | 'closing' | 'closed'
+  since: number; windowId: number | string | null; windowType: unknown; size: number; moved: number; stop: ChestStop | null; cancelled: boolean
+  resolve: (result: ChestResult) => void; reject: (error: Error) => void
+}
+// The server answers a chest click within this time once an input tick followed; content and close answers come at once.
+const CHEST_OPEN_MS = 2000
+const CHEST_CONTENT_MS = 1000
+const CHEST_CLOSE_MS = 1000
+// On open the server resends the bot's inventory with new stack IDs right after the chest content; wait for it before the first move.
+const CHEST_SETTLE_MS = 100
+const chestLog = (message: string) => console.log('[chest] ' + message)
 
 export class BotController {
   readonly state: WorldState
@@ -42,6 +60,7 @@ export class BotController {
   private chatLines: ChatLine[] = []
   private chatLogRevision = 0
   private drops: DropJob[] = []
+  private chestJob: ChestJob | null = null
   /** Called for every chat or whisper line from another player. */
   onChat: (sender: string, message: string) => void = () => {}
   /** Called once when a navigation run ends: arrived, failed, stopped, replaced or lost with the connection. */
@@ -83,12 +102,14 @@ export class BotController {
     for (const command of this.commands.splice(0)) {
       if (typeof command === 'object') {
         this.previewJob?.cancel()
+        this.cancelChest()
         // A new target replaces the running one; report that run as stopped first.
         if (this.runActive) { this.runActive = false; this.onNavigationEnd(this.runOrigin, 'stopped', 'Neues Ziel gesetzt.') }
         this.navigator.start({ x: command.x, z: command.z }, this.now())
         this.runActive = true; this.runOrigin = command.origin ? { ...command.origin } : null
         this.settleNavigation()
       } else if (command === 'stop_navigation') {
+        this.cancelChest()
         this.navigator.stop()
         this.settleNavigation()
       } else if (command === 'disconnect') {
@@ -115,6 +136,7 @@ export class BotController {
           this.navigator.face(send, job.toward)
           this.state.inventory.drop(send, job.name, job.count, this.now()).then(job.resolve, job.reject)
         }
+        this.stepChest(send)
         this.state.inventory.expire(this.now())
       }
       catch (error) { this.failed(error instanceof Error ? error.message : String(error)) }
@@ -277,6 +299,26 @@ export class BotController {
       client.on('item_registry', (packet: { itemstates?: unknown }) => { if (active()) this.state.inventory.setRegistry(packet.itemstates) })
       client.on('inventory_content', (packet: { window_id?: string | number; input?: unknown }) => {
         if (active() && isInventoryWindow(packet.window_id)) { this.state.inventory.setContent(packet.input); this.publishAt = 0 }
+        // The opened chest's slots come with the window ID from container_open (54 for a double chest).
+        const job = this.chestJob
+        if (active() && job?.phase === 'content' && packet.window_id === job.windowId) {
+          job.size = this.state.inventory.openWindow(job.windowId, job.windowType, packet.input).slots.length
+          job.phase = 'move'; job.since = this.now()
+        }
+      })
+      client.on('container_open', (packet: { window_id?: string | number; window_type?: unknown; coordinates?: Position }) => {
+        const job = this.chestJob
+        if (!active() || job?.phase !== 'opening' || packet.window_id === undefined) return
+        chestLog(`Kiste bei (${job.chest.x}, ${job.chest.y}, ${job.chest.z}) offen: Fenster ${packet.window_id}, Typ ${String(packet.window_type)}.`)
+        job.windowId = packet.window_id; job.windowType = packet.window_type
+        job.phase = 'content'; job.since = this.now()
+      })
+      client.on('container_close', (packet: { window_id?: string | number }) => {
+        const job = this.chestJob
+        if (!active() || !job || job.windowId === null || packet.window_id !== job.windowId) return
+        // Our own close is confirmed; any other close comes from the server (e.g. the chest was broken).
+        if (job.phase !== 'closing' && job.phase !== 'closed') { job.stop ??= 'closed'; chestLog('Der Server hat die Kiste geschlossen.') }
+        this.finishChest(true)
       })
       client.on('inventory_slot', (packet: { window_id?: string | number; slot?: number; item?: unknown }) => {
         if (active() && isInventoryWindow(packet.window_id)) { this.state.inventory.setSlot(packet.slot, packet.item); this.publishAt = 0 }
@@ -348,6 +390,85 @@ export class BotController {
     return new Promise((resolve, reject) => this.drops.push({ name, count, toward: { ...toward }, resolve, reject }))
   }
 
+  /**
+   * Opens the chest at `chest` (the bot must already stand within reach), moves items one stack portion at a time
+   * as `next` decides, and closes it again. Resolves with what the server confirmed; rejects only on disconnect.
+   */
+  useChest (chest: Position, next: ChestPlanner): Promise<ChestResult> {
+    if (this.stopped || !this.client || this.state.status !== 'spawned') return Promise.reject(new Error('Bot ist nicht verbunden.'))
+    if (this.chestJob) return Promise.reject(new Error('Es ist schon eine Kiste offen.'))
+    return new Promise((resolve, reject) => {
+      this.chestJob = { chest: { ...chest }, next, phase: 'click', since: this.now(), windowId: null, windowType: null, size: 0, moved: 0, stop: null, cancelled: false, resolve, reject }
+    })
+  }
+
+  /** True while a chest visit runs. */
+  get chestBusy () { return this.chestJob !== null }
+
+  /** Ends a chest visit early: a running request is still awaited, then the chest is closed. */
+  cancelChest () {
+    const job = this.chestJob
+    if (!job || job.cancelled) return
+    job.cancelled = true
+    job.stop ??= 'cancelled'
+    chestLog('Kistenzugriff abgebrochen.')
+    if (job.phase === 'click' || job.phase === 'opening') this.finishChest(false)
+    else if (job.phase === 'content' || job.phase === 'move') job.phase = 'closing'
+  }
+
+  // One tick of the chest visit: click, keep sending input until the server opens it, move, close.
+  private stepChest (send: (name: string, params: unknown) => void) {
+    const job = this.chestJob
+    if (!job) return
+    const now = this.now()
+    const center = { x: job.chest.x + .5, z: job.chest.z + .5 }
+    if (job.phase === 'click') {
+      const runtimeId = this.state.blockRuntimeIdAt(job.chest.x, job.chest.y, job.chest.z)
+      if (runtimeId === null) { job.stop = 'not_opened'; return this.finishChest(false) }
+      chestLog(`Klicke Kiste bei (${job.chest.x}, ${job.chest.y}, ${job.chest.z}).`)
+      this.navigator.clickBlock(send, job.chest, runtimeId, this.state.inventory.heldItem(0))
+      // The server handles the click only together with the next input packet (verified live).
+      this.navigator.face(send, center)
+      job.phase = 'opening'; job.since = now
+    } else if (job.phase === 'opening') {
+      if (now - job.since > CHEST_OPEN_MS) { chestLog('Kiste hat sich nicht geöffnet.'); job.stop = 'not_opened'; return this.finishChest(false) }
+      this.navigator.face(send, center)
+    } else if (job.phase === 'content') {
+      if (now - job.since > CHEST_CONTENT_MS) { job.stop = 'timeout'; job.phase = 'closing' }
+    } else if (job.phase === 'move' && now - job.since >= CHEST_SETTLE_MS) {
+      const window = this.state.inventory.window
+      const decision = window ? job.next(this.state.inventory, window, job.moved) : { stop: 'timeout' as const }
+      if ('stop' in decision) { job.stop = decision.stop; job.phase = 'closing' }
+      else {
+        job.phase = 'waiting'
+        const move = decision.move
+        this.state.inventory.place(send, move, now).then(response => {
+          if (this.chestJob !== job) return
+          if (response.status === 'ok' || response.status === 0) job.moved += move.count
+          else job.stop = 'rejected'
+          job.phase = job.stop === 'rejected' || job.cancelled ? 'closing' : 'move'
+        }, () => {
+          if (this.chestJob !== job) return
+          job.stop ??= 'timeout'; job.phase = 'closing'
+        })
+      }
+    }
+    if (job.phase === 'closing') {
+      send('container_close', { window_id: job.windowId, window_type: job.windowType, server: false })
+      job.phase = 'closed'; job.since = now
+    } else if (job.phase === 'closed' && now - job.since > CHEST_CLOSE_MS) this.finishChest(true)
+  }
+
+  private finishChest (opened: boolean) {
+    const job = this.chestJob
+    if (!job) return
+    this.chestJob = null
+    this.state.inventory.window = null
+    const result = { opened, size: job.size, moved: job.moved, stop: job.stop ?? 'done' }
+    chestLog(`Kiste fertig: ${JSON.stringify(result)}.`)
+    job.resolve(result)
+  }
+
   /** Revision of the chat log; it changes with every new line. */
   get chatRevision () { return this.chatLogRevision }
 
@@ -401,6 +522,8 @@ export class BotController {
     const old = this.client
     this.client = null
     for (const job of this.drops.splice(0)) job.reject(new Error('Verbindung getrennt.'))
+    this.chestJob?.reject(new Error('Verbindung getrennt.'))
+    this.chestJob = null
     this.navigator.reset()
     this.settleNavigation()
     this.state.resetWorld()

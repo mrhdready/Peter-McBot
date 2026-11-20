@@ -361,6 +361,12 @@ export class ChunkWorld {
     return below !== null && this.doorHalf[below] === 1 ? { y: y - 1, id: below } : { y, id }
   }
 
+  /** Network runtime ID of the block state at (x, y, z), or null while unknown. */
+  blockRuntimeIdAt (x: number, y: number, z: number): number | null {
+    const id = this.stateAt(x, y, z)
+    return id === null ? null : this.runtimeIds.get(id) ?? null
+  }
+
   // A hand-openable door or fence gate in block (x, y, z), resolved to its lower half: position, open state and network runtime ID.
   doorAt (x: number, y: number, z: number): { position: Position; open: boolean; runtimeId: number } | null {
     const base = this.doorBase(x, y, z)
@@ -464,14 +470,23 @@ export class ChunkWorld {
     } finally { this.mapping = false }
   }
 
-  async searchBlocks (blockId: string, limit: number, position: Position | null, signal?: AbortSignal) {
-    if (!/^(minecraft:)?[a-z0-9_]{1,100}$/.test(blockId)) throw new WorldError('Invalid block ID')
+  // One block ID or a list of them; a hit is any block whose state belongs to one of the IDs.
+  async searchBlocks<T extends string | string[]> (blockId: T, limit: number, position: Position | null, signal?: AbortSignal) {
+    const ids = ([] as string[]).concat(blockId)
+    if (!ids.length || ids.some(id => !/^(minecraft:)?[a-z0-9_]{1,100}$/.test(id))) throw new WorldError('Invalid block ID')
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new WorldError('Limit must be 1..100')
     if (!this.blocks || !position) throw new WorldError('World data is not ready', 409)
     if (this.searching) throw new WorldError('A search is already running', 429)
-    const canonical = blockId.startsWith('minecraft:') ? blockId : 'minecraft:' + blockId
-    const block = this.blocks[canonical]
-    if (!block) throw new WorldError('Unknown block ID: ' + canonical)
+    const canonicals = ids.map(id => id.startsWith('minecraft:') ? id : 'minecraft:' + id)
+    const ranges: BlockInfo[] = []
+    for (const name of canonicals) {
+      const block = this.blocks[name]
+      if (!block) throw new WorldError('Unknown block ID: ' + name)
+      ranges.push(block)
+    }
+    // The result names the IDs as given: one canonical string, or the canonical list.
+    const canonical = (Array.isArray(blockId) ? canonicals : canonicals[0]) as T
+    const matches = (id: number) => ranges.some(range => id >= range.min && id <= range.max)
     const origin = { ...position }; const generation = this.generation; const revision = this.revision
     const coverage = this.coverage()
     const sections = [...this.chunks.values()].flatMap(column => [...column.sections].map(([y, section]) => ({ x: column.x, z: column.z, y, ...section })))
@@ -481,13 +496,13 @@ export class ChunkWorld {
     }
     sections.sort((a, b) => distanceToSection(a) - distanceToSection(b))
     const hits: Array<Position & { distance: number }> = []
-    let matches = 0
+    let found = 0
     const compare = (a: Position & { distance: number }, b: Position & { distance: number }) => a.distance - b.distance || a.x - b.x || a.y - b.y || a.z - b.z
     this.searching = true
     try {
       for (const section of sections) {
         if (hits.length === limit && distanceToSection(section) > hits[limit - 1].distance ** 2 + 1e-8) continue
-        if (section.data === null && !(this.air >= block.min && this.air <= block.max)) continue
+        if (section.data === null && !matches(this.air)) continue
         for (let i = 0; i < 4096; i++) {
           if ((i & 511) === 0) {
             await yieldLoop()
@@ -495,8 +510,8 @@ export class ChunkWorld {
             if (this.generation !== generation) throw new WorldError('World changed; repeat search', 409)
           }
           const a = section.data?.[i] ?? this.air; const b = section.data?.[4096 + i] ?? this.air
-          if (!((a >= block.min && a <= block.max) || (b !== this.air && b >= block.min && b <= block.max))) continue
-          matches++
+          if (!(matches(a) || (b !== this.air && matches(b)))) continue
+          found++
           const x = section.x * 16 + (i >>> 8); const y = section.y * 16 + ((i >>> 4) & 15); const z = section.z * 16 + (i & 15)
           const hit = { x, y, z, distance: Math.hypot(x - origin.x, y - origin.y, z - origin.z) }
           if (hits.length === limit && compare(hit, hits[limit - 1]) >= 0) continue
@@ -504,7 +519,7 @@ export class ChunkWorld {
           if (hits.length > limit) hits.pop()
         }
       }
-      return { blockId: canonical, origin, hits, limit, limitReached: matches >= limit, coverage, stale: this.revision !== revision,
+      return { blockId: canonical, origin, hits, limit, limitReached: found >= limit, coverage, stale: this.revision !== revision,
         outcome: hits.length ? 'found' : coverage.complete ? 'not_found' : 'unknown' }
     } finally { this.searching = false }
   }

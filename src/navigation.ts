@@ -197,16 +197,24 @@ export class Navigator {
   }
 
   private clickDoor (send: Send, door: Position) {
-    const p = this.world.position!; const state = this.world.doorAt(door.x, door.y, door.z)
-    if (!state) return
-    // Click the door face that points towards the bot (2 north, 3 south, 4 west, 5 east).
-    const dx = p.x - door.x - .5; const dz = p.z - door.z - .5
+    const state = this.world.doorAt(door.x, door.y, door.z)
+    if (state) this.clickBlock(send, door, state.runtimeId)
+  }
+
+  /**
+   * Right-clicks a block with hotbar slot 0 (`held` is that slot's item) on the face that points towards the bot
+   * (2 north, 3 south, 4 west, 5 east). The server handles the click only together with a following input packet.
+   */
+  clickBlock (send: Send, block: Position, runtimeId: number, held: unknown = EMPTY_ITEM) {
+    const p = this.world.position
+    if (!p) return
+    const dx = p.x - block.x - .5; const dz = p.z - block.z - .5
     const face = Math.abs(dx) > Math.abs(dz) ? (dx > 0 ? 5 : 4) : (dz > 0 ? 3 : 2)
     const click = { x: face === 5 ? 1 : face === 4 ? 0 : .5, y: .5, z: face === 3 ? 1 : face === 2 ? 0 : .5 }
-    this.yaw = Math.atan2(-(door.x + .5 - p.x), door.z + .5 - p.z) * 180 / Math.PI
+    this.yaw = Math.atan2(-(block.x + .5 - p.x), block.z + .5 - p.z) * 180 / Math.PI
     send('inventory_transaction', { transaction: { legacy: { legacy_request_id: 0 }, transaction_type: 'item_use', actions: [],
-      transaction_data: { action_type: 'click_block', trigger_type: 'player_input', block_position: { ...door }, face, hotbar_slot: 0, hand: 'main_hand',
-        held_item: EMPTY_ITEM, player_pos: { ...p }, click_pos: click, block_runtime_id: state.runtimeId, client_prediction: 'success', client_cooldown_state: 'off' } } })
+      transaction_data: { action_type: 'click_block', trigger_type: 'player_input', block_position: { x: block.x, y: block.y, z: block.z }, face, hotbar_slot: 0, hand: 'main_hand',
+        held_item: held, player_pos: { ...p }, click_pos: click, block_runtime_id: runtimeId, client_prediction: 'success', client_cooldown_state: 'off' } } })
   }
 
   /** Turns the bot towards a point with one input packet without moving it. */

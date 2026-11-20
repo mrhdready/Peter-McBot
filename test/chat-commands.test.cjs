@@ -91,7 +91,7 @@ test('the bot name prefix is case-insensitive, allows @ and a separator, and mus
   await command('ich sag Peter Bot hallo')
   await command('Peter Bot tanz')
   await command('Peter Bot')
-  assert.deepEqual(said(), ['Hallo Alex!', 'Hallo Alex!', 'Befehle: hallo, go <Wegpunkt>, come, find <Block>, inventory, give <Item> [Anzahl], stop', 'Befehle: hallo, go <Wegpunkt>, come, find <Block>, inventory, give <Item> [Anzahl], stop'])
+  assert.deepEqual(said(), ['Hallo Alex!', 'Hallo Alex!', 'Befehle: hallo, go <Wegpunkt>, come, find <Block>, inventory, give <Item> [Anzahl], put <Item>|all [Anzahl], get <Item> [Anzahl], stop', 'Befehle: hallo, go <Wegpunkt>, come, find <Block>, inventory, give <Item> [Anzahl], put <Item>|all [Anzahl], get <Item> [Anzahl], stop'])
 })
 
 test('a player gets one command per 2 s; other players are not throttled', async t => {
@@ -319,4 +319,162 @@ test('inventory lists item totals; give walks up, throws towards the sender and 
   advance(50)
   assert.equal(said().at(-1), 'Du bist weggelaufen, Alex. Ich behalte die Sachen.')
   assert.equal(client.sent.filter(([name]) => name === 'item_stack_request').length, requests)
+})
+
+// put/get: a fake server opens chests on click, applies place requests to its own copy of the slots and checks the stack IDs.
+const { nextTransfer } = require('../dist/inventory.js')
+const slotItem = (id, count, stackId) => ({ id, count, stack: stackId })
+const packetItem = slot => slot ? stack(slot.id, slot.count, slot.stack) : { network_id: 0, count: 0, metadata: 0, has_stack_id: false, block_runtime_id: 0 }
+const chestAt = (x, z, size, items = {}, extra = {}) => ({ x, y: 71, z, slots: Array.from({ length: size }, (_, i) => items[i] ?? null), ...extra })
+
+function chestSetup (t, chests, ownItems) {
+  const env = setup(t)
+  const { bot, client } = env
+  client.emit('item_registry', { itemstates: registry })
+  const own = Array.from({ length: 36 }, (_, i) => ownItems[i] ?? null)
+  client.emit('inventory_content', { window_id: 'inventory', input: own.map(packetItem) })
+  let searched = null
+  bot.state.searchBlocks = async (ids, limit, origin) => {
+    searched = { ids, limit, origin }
+    return { hits: chests.map(({ x, y, z }) => ({ x, y, z, distance: Math.hypot(x - origin.x, y - origin.y, z - origin.z) })), outcome: 'found' }
+  }
+  bot.state.blockRuntimeIdAt = () => 77
+  const clicks = []; const requests = []
+  let seen = 0; let open = null; let nextStack = 1000
+  const respond = request => {
+    const action = request.actions[0]
+    requests.push(action)
+    assert.equal(action.type_id, 'place')
+    const side = container => container === 'container' ? open.slots : own
+    const from = side(action.source.slot_type.container_id); const to = side(action.destination.slot_type.container_id)
+    const source = from[action.source.slot]; const target = to[action.destination.slot]
+    assert.ok(source && source.stack === action.source.stack_id && action.count <= source.count, 'Source slot and stack ID match the server')
+    assert.equal(target?.stack ?? 0, action.destination.stack_id, 'Destination stack ID matches the server')
+    assert.ok(!target || target.id === source.id, 'Only the same item stacks')
+    source.count -= action.count
+    if (!source.count) from[action.source.slot] = null
+    if (target) target.count += action.count
+    else to[action.destination.slot] = slotItem(source.id, action.count, nextStack++)
+    const entry = (container, slot, list) => ({ slot_type: { container_id: container }, slots: [{ slot, hotbar_slot: slot, count: list[slot]?.count ?? 0, item_stack_id: list[slot]?.stack, custom_name: '', filtered_custom_name: '', durability_correction: 0 }] })
+    client.emit('item_stack_response', { responses: [{ status: 'ok', request_id: request.request_id, containers: [
+      entry(action.source.slot_type.container_id, action.source.slot, from), entry(action.destination.slot_type.container_id, action.destination.slot, to)] }] })
+  }
+  const tick = async () => {
+    env.advance(50)
+    while (seen < client.sent.length) {
+      const [name, params] = client.sent[seen++]
+      if (name === 'inventory_transaction' && params.transaction.transaction_data?.action_type === 'click_block') {
+        const p = params.transaction.transaction_data.block_position
+        clicks.push({ ...p, next: client.sent[seen]?.[0] })
+        const chest = chests.find(c => c.x === p.x && c.y === p.y && c.z === p.z)
+        if (!chest || chest.locked) continue
+        open = chest
+        client.emit('container_open', { window_id: 2, window_type: 'container', coordinates: p, runtime_entity_id: -1n })
+        client.emit('inventory_content', { window_id: 2, input: chest.slots.map(packetItem) })
+        client.emit('inventory_content', { window_id: 'inventory', input: own.map(packetItem) })
+      } else if (name === 'item_stack_request') respond(params.requests[0])
+      else if (name === 'container_close') { open = null; client.emit('container_close', { window_id: 2, window_type: 'none', server: false }) }
+    }
+    await settle()
+  }
+  const ticks = async (count, until = () => false) => { for (let i = 0; i < count && !until(); i++) await tick() }
+  const last = () => env.said().at(-1) ?? ''
+  return { ...env, own, clicks, requests, ticks, last, searched: () => searched, closes: () => client.sent.filter(([name]) => name === 'container_close').length }
+}
+
+test('nextTransfer fills partial stacks up to the item stack size before empty slots and names both containers', () => {
+  const own = [{ name: 'minecraft:ender_pearl', count: 10, stackId: 4, raw: null }]
+  const chest = [null, { name: 'minecraft:ender_pearl', count: 12, stackId: 9, raw: null }]
+  assert.deepEqual(nextTransfer(own, () => 'hotbar', chest, () => 'container', 'minecraft:ender_pearl', Infinity),
+    { move: { name: 'minecraft:ender_pearl', count: 4, from: { container: 'hotbar', slot: 0, stackId: 4 }, to: { container: 'container', slot: 1, stackId: 9 } } })
+  assert.deepEqual(nextTransfer(own, () => 'hotbar', [{ name: 'minecraft:dirt', count: 1, stackId: 1, raw: null }], () => 'container', null, 5), { stop: 'target_full' })
+  assert.deepEqual(nextTransfer(own, () => 'hotbar', chest, () => 'container', 'minecraft:dirt', 5), { stop: 'source_empty' })
+  assert.deepEqual(nextTransfer(own, () => 'hotbar', chest, () => 'container', null, 0), { stop: 'done' })
+})
+
+test('put clicks the nearest chest, sends an input tick after the click, fills partial stacks first and reports the total', async t => {
+  const chest = chestAt(1, 0, 27, { 0: slotItem(3, 60, 50), 1: slotItem(50, 1, 51) })
+  const { bot, said, last, command, clicks, requests, ticks, closes, searched } = chestSetup(t, [chest], { 0: slotItem(3, 64, 1), 1: slotItem(50, 3, 3), 9: slotItem(3, 10, 2) })
+  await command('Peter Bot put')
+  await command('Peter Bot put diamond')
+  assert.deepEqual(said().slice(-2), ['Was soll ich ablegen? put <Item>|all [Anzahl]', 'Ich habe kein diamond.'])
+  await command('Peter Bot put dirt')
+  await ticks(40, () => !bot.chestBusy && last().includes('abgelegt'))
+  assert.equal(clicks.length, 1)
+  assert.equal(clicks[0].next, 'player_auth_input', 'The server handles the click only with a following input packet')
+  assert.deepEqual(requests.map(action => [action.source.slot_type.container_id, action.source.slot, action.destination.slot_type.container_id, action.destination.slot, action.count]),
+    [['hotbar', 0, 'container', 0, 4], ['hotbar', 0, 'container', 2, 60], ['inventory', 9, 'container', 2, 4], ['inventory', 9, 'container', 3, 6]])
+  assert.equal(last(), '74 dirt in 1 Kiste abgelegt.')
+  assert.equal(closes(), 1)
+  assert.deepEqual(bot.state.inventory.items(), [{ name: 'minecraft:torch', count: 3 }])
+  assert.deepEqual(chest.slots.slice(0, 4).map(slot => slot && slot.count), [64, 1, 64, 6])
+  const ids = searched().ids
+  assert.ok(ids.includes('chest') && ids.includes('trapped_chest') && ids.includes('waxed_oxidized_copper_chest') && !ids.includes('ender_chest') && !ids.includes('barrel'))
+})
+
+test('put moves on to the next chest when one is full and moves only what the bot has; put all empties the inventory', async t => {
+  const full = chestAt(1, 0, 27, Object.fromEntries(Array.from({ length: 27 }, (_, i) => [i, slotItem(4, 64, 100 + i)])))
+  const empty = chestAt(-1, 0, 27)
+  const { bot, said, last, command, clicks, ticks } = chestSetup(t, [full, empty], { 0: slotItem(3, 5, 1), 3: slotItem(50, 2, 2) })
+  await command('Peter Bot put dirt 10')
+  await ticks(60, () => !bot.chestBusy && last().startsWith('Ich hatte'))
+  assert.deepEqual(clicks.map(click => click.x), [1, -1])
+  assert.ok(said().includes('Kiste voll, versuche die nächste.'))
+  assert.equal(last(), 'Ich hatte nur 5 dirt, in 2 Kisten abgelegt.')
+  await command('Peter Bot put all')
+  await ticks(60, () => !bot.chestBusy && last().includes('Gegenstände'))
+  assert.equal(last(), '2 Gegenstände in 2 Kisten abgelegt.')
+  assert.deepEqual(bot.state.inventory.items(), [])
+  assert.deepEqual(empty.slots.slice(0, 2).map(slot => slot && [slot.id, slot.count]), [[3, 5], [50, 2]])
+})
+
+test('get resolves the item by prefix in the chest, collects from the next chest and reports a full inventory or ambiguity', async t => {
+  const first = chestAt(1, 0, 27, { 3: slotItem(4, 64, 60) })
+  const second = chestAt(-1, 0, 27, { 0: slotItem(4, 64, 61), 1: slotItem(17, 2, 62), 2: slotItem(5, 2, 63) })
+  const { bot, said, last, command, ticks, own } = chestSetup(t, [first, second], {})
+  await command('Peter Bot get')
+  assert.equal(last(), 'Was soll ich holen? get <Item> [Anzahl]')
+  await command('Peter Bot get cobble 70')
+  await ticks(60, () => !bot.chestBusy && last().includes('geholt'))
+  assert.ok(said().includes('Hier nur 64 cobblestone, versuche die nächste.'))
+  assert.equal(last(), '70 cobblestone aus 2 Kisten geholt.')
+  assert.deepEqual(bot.state.inventory.items(), [{ name: 'minecraft:cobblestone', count: 70 }])
+  assert.equal(second.slots[0].count, 58)
+  await command('Peter Bot get oak')
+  await ticks(60, () => !bot.chestBusy && last().startsWith('Mehrdeutig'))
+  assert.equal(last(), 'Mehrdeutig: oak_log, oak_planks')
+  // A full inventory ends the run.
+  for (let i = 0; i < 36; i++) own[i] = slotItem(12, 64, 200 + i)
+  bot.state.inventory.setContent(own.map(packetItem))
+  await command('Peter Bot get oak_log')
+  await ticks(60, () => !bot.chestBusy && last() === 'Nichts geholt.')
+  assert.deepEqual(said().slice(-2), ['Mein Inventar ist voll.', 'Nichts geholt.'])
+})
+
+test('a chest that does not open is skipped; stop during the transfer closes the chest and reports the partial amount', async t => {
+  const locked = chestAt(1, 0, 27, {}, { locked: true })
+  const open = chestAt(-1, 0, 27)
+  const { bot, last, command, clicks, requests, ticks, closes } = chestSetup(t, [locked, open], { 0: slotItem(3, 64, 1), 1: slotItem(3, 64, 2), 2: slotItem(3, 64, 3) })
+  await command('Peter Bot put dirt')
+  await ticks(80, () => requests.length > 0)
+  assert.deepEqual(clicks.map(click => click.x), [1, -1], 'The locked chest is given up after 2 s')
+  assert.equal(closes(), 0, 'A chest that never opened is not closed')
+  await command('Peter Bot stop')
+  await ticks(20, () => !bot.chestBusy && last().startsWith('Abgebrochen'))
+  assert.equal(requests.length, 1)
+  assert.equal(closes(), 1)
+  assert.equal(last(), 'Abgebrochen. 64 dirt in 1 Kiste abgelegt.')
+})
+
+test('a double chest counts once; a chest out of reach is walked to without an arrival line', async t => {
+  const big = chestAt(1, 0, 54, Object.fromEntries(Array.from({ length: 54 }, (_, i) => [i, slotItem(4, 64, 100 + i)])))
+  const otherHalf = chestAt(1, 1, 54)
+  const far = chestAt(6, 0, 27)
+  const { bot, said, last, command, clicks, ticks } = chestSetup(t, [big, otherHalf, far], { 0: slotItem(3, 1, 1) })
+  await command('Peter Bot put dirt')
+  await ticks(600, () => !bot.chestBusy && last().includes('abgelegt'))
+  assert.deepEqual(clicks.map(click => [click.x, click.z]), [[1, 0], [6, 0]], 'The other half of the double chest is not opened again')
+  assert.equal(last(), '1 dirt in 2 Kisten abgelegt.')
+  assert.ok(!said().some(line => line.startsWith('Angekommen')))
+  assert.ok(Math.hypot(bot.state.position.x - 6.5, bot.state.position.z - .5) < 2, 'The bot stands next to the far chest')
 })
