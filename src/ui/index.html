@@ -15,11 +15,14 @@
 <div class="map-stage">
 <div id="map-frame" hidden><canvas id="map-ground" aria-hidden="true"></canvas>
 <canvas id="map" width="144" height="144" tabindex="0" aria-label="Draufsicht der Umgebung, Nord oben. Klick oder Enter wählt das Ziel." aria-describedby="map-info" hidden>Die Umgebungskarte benötigt Canvas. Blockkoordinaten sind auch über die Blocksuche verfügbar.</canvas>
+<!-- Code generated/edited by Claude Opus 5.5: pins and their overlay lie above the canvas. -->
+<div id="map-pins" aria-label="Markierungen"></div><div id="map-pin-overlay" class="pin-overlay above" role="tooltip" hidden></div>
 <div id="map-controls" class="overlay controls" hidden><button id="map-home" type="button">Zum Bot</button><button id="map-zoom-in" type="button" aria-label="Karte vergrößern">+</button><button id="map-zoom-out" type="button" aria-label="Karte verkleinern">−</button><label for="map-dimension" class="visually-hidden">Dimension</label><select id="map-dimension"><option value="0">Oberwelt</option><option value="1">Nether</option><option value="2">Ende</option></select></div>
 <ul class="overlay legend" aria-label="Legende">
-<li><i style="background:#ef4444"></i>Bot</li>
-<li><i style="border:2px solid #fb923c"></i>Ziel</li>
-<li><i style="background:#c084fc"></i>Weg</li>
+<li><span class="legend-pin" aria-hidden="true">🤖</span>Bot</li>
+<li><span class="legend-pin" aria-hidden="true">📌</span>Ziel</li>
+<li><span class="legend-pin" aria-hidden="true">📍</span>Ort</li>
+<li><i class="legend-line"></i>Weg (gestrichelt: Vorschau)</li>
 <li><i style="background:#22d3ee"></i>Treffer</li>
 <li><i style="background:#202b40"></i>Unbekannt</li>
 <li><i style="background:repeating-linear-gradient(45deg,#d5ac50 0 2px,#858b92 2px 4px)"></i>Daten fehlen oben</li>
@@ -40,6 +43,20 @@
 <p id="preview-status" role="status"></p>
 <p id="nav-feedback" role="status"></p>
 <p id="nav-status" role="status">Navigation inaktiv.</p>
+</section>
+<!-- Code generated/edited by Claude Opus 5.5: saved places and navigation history. -->
+<section class="panel" id="places-panel" aria-labelledby="places-heading" hidden>
+<h2 id="places-heading">Orte</h2>
+<div class="poi-fields"><label for="poi-name">Name</label><label for="poi-icon">Symbol</label>
+<input id="poi-name" maxlength="40" autocomplete="off" placeholder="z. B. Basis">
+<select id="poi-icon"><option value="star" selected>⭐ Sonstiges</option><option value="home">🏠 Basis</option><option value="mine">⛏️ Mine</option><option value="portal">🌀 Portal</option><option value="farm">🌾 Farm</option><option value="storage">📦 Lager</option></select></div>
+<div class="actions"><button id="poi-save-target" type="button">Ziel speichern</button><button id="poi-save-bot" type="button">Bot-Position speichern</button></div>
+<p id="poi-feedback" role="status"></p>
+<ul id="poi-list" class="place-list" aria-label="Gespeicherte Orte"></ul>
+<p id="poi-empty" class="hint">Noch keine Orte in dieser Dimension.</p>
+<h3>Zuletzt angesteuert</h3>
+<ul id="history-list" class="place-list" aria-label="Zuletzt angesteuerte Ziele"></ul>
+<p id="history-empty" class="hint">Noch keine Navigationsziele in dieser Dimension.</p>
 </section>
 <section class="panel" aria-labelledby="bot-heading">
 <h2 id="bot-heading">Bot</h2>
@@ -63,7 +80,10 @@
 <p>Nord (−Z) oben, Ost (+X) rechts. Ziehen verschiebt die Karte, Mausrad oder +/− zoomt. Pfeiltasten lesen einzelne Zellen, Umschalt + Pfeiltasten verschiebt die Karte. Klick, Enter oder Leertaste übernimmt die Zelle als Ziel.</p>
 <p>Leicht vernebelte Flächen sind historische Beobachtungen und dienen nur der Orientierung; Navigation, Vorschau und Blocksuche nutzen ausschließlich aktuelle Weltdaten. Die Karte lädt bei neuen Chunks und nach der Ankunft automatisch nach.</p>
 <h3>Navigation</h3>
-<p>Der Bot ermittelt die erreichbare Höhe selbst; die Kartenhöhe ist keine Zielhöhe. Halbstufen und Treppen werden nach ihrer Richtung geprüft, Auf- und Abstiege sind auf einen Block begrenzt. Keine Lücken- oder Flüssigkeitssprünge. Lila zeigt die Vorschau oder den verbleibenden Weg, etwa sekündlich aktualisiert.</p>
+<p>Der Bot ermittelt die erreichbare Höhe selbst; die Kartenhöhe ist keine Zielhöhe. Halbstufen und Treppen werden nach ihrer Richtung geprüft, Auf- und Abstiege sind auf einen Block begrenzt. Keine Lücken- oder Flüssigkeitssprünge. Die lila Linie zeigt gestrichelt die Vorschau und durchgezogen den verbleibenden Weg, etwa sekündlich aktualisiert.</p>
+<h3>Orte und Verlauf</h3>
+<p>„Ziel speichern“ oder „Bot-Position speichern“ legt einen Ort mit Name und Symbol an; er gilt für Server, Kartenschlüssel und Dimension. Orte erscheinen als 📍 auf der Karte. Zeigen auf eine Markierung blendet Details ein; Klick auf einen Ort übernimmt ihn als Ziel. Auf Touch-Geräten zeigt das erste Tippen die Details, erneutes Tippen übernimmt das Ziel. „Löschen“ muss ein zweites Mal bestätigt werden.</p>
+<p>„Zuletzt angesteuert“ listet die letzten zehn angenommenen Navigationsziele der Dimension. Ein Ziel bewegt den Bot erst nach „Navigation starten“.</p>
 <p>Stopp beendet den Vortrieb; eine laufende Sprung- oder Fallbewegung endet bei der Landung.</p>
 <h3>Blocksuche</h3>
 <p>Treffer werden türkis markiert, auch unter der Oberfläche. „Ziel“ in der Trefferliste übernimmt X/Z als Navigationsziel. Bei Weltänderungen erneut suchen.</p>

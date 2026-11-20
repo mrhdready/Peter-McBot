@@ -1,6 +1,18 @@
 /* Code generated/edited by Claude Opus 5.5: extracted from web.ts, adapted to the redesigned layout. */
 const byId = id => document.getElementById(id);
 const archiveEnabled = false;
+// Code generated/edited by Claude Opus 5.5: saved places, navigation history and map pins.
+const placesEnabled = false;
+const poiIcons = {home:'🏠', mine:'⛏️', portal:'🌀', farm:'🌾', storage:'📦', star:'⭐'};
+let places = {dimension:null, pois:[], history:[]};
+let placesRevision = null;
+let placesDimension = null;
+let placesRequest = null;
+let placesRenderedAt = null;
+let deleteArmed = null;
+let pins = new Map();
+let overlayPin = null;
+let lastPointerType = 'mouse';
 let registryReady = false;
 let currentMap = null;
 let mapRequest = null;
@@ -38,6 +50,7 @@ let drag = null;
 let dragged = false;
 const tileCache = new Map();
 byId('map-controls').hidden = !archiveEnabled;
+byId('places-panel').hidden = !placesEnabled;
 function dimensionNumber (value) {
   return ({overworld:0, nether:1, end:2})[value] ?? (Number.isInteger(value) ? value : null);
 }
@@ -51,6 +64,8 @@ function setMapSize (width, height) {
 function invalidateView () {
   if (mapRequest) mapRequest.abort();
   mapRequest = null; mapDirty = true; currentMap = null; mapCursor = null; renderedTerrainKey = null;
+  // Code generated/edited by Claude Opus 5.5: pins belong to the old viewport.
+  clearPins();
   context.clearRect(0, 0, canvas.width, canvas.height);
   groundContext.clearRect(0, 0, ground.width, ground.height);
   void loadMap();
@@ -78,6 +93,8 @@ byId('map-zoom-out').onclick = () => zoomMap(2);
 byId('map-dimension').onchange = () => {
   followBot = false; mapDimension = Number(byId('map-dimension').value);
   invalidateView();
+  // Code generated/edited by Claude Opus 5.5
+  void loadPlaces();
 };
 for (const id of ['target-x', 'target-z']) byId(id).oninput = () => {
   byId('nav-feedback').textContent = 'Ziel geändert. Mit „Navigation starten“ anlaufen.';
@@ -271,9 +288,12 @@ function drawMap () {
     const origin = route.origin || botPosition;
     context.beginPath(); context.moveTo(origin.x - map.x, origin.z - map.z);
     for (const point of route.path) context.lineTo(point.x - map.x, point.z - map.z);
+    // Code generated/edited by Claude Opus 5.5: thin line of constant screen width; dashed preview, solid active navigation.
+    const pixel = map.width / Math.max(1, canvas.getBoundingClientRect().width);
     context.lineJoin = 'round'; context.lineCap = 'round';
-    context.strokeStyle = '#3b0764'; context.lineWidth = 1.3; context.stroke();
-    context.strokeStyle = '#c084fc'; context.lineWidth = .65; context.stroke();
+    context.setLineDash(route === preview ? [6 * pixel, 4 * pixel] : []);
+    context.strokeStyle = '#c084fc'; context.lineWidth = 2 * pixel; context.stroke();
+    context.setLineDash([]);
   }
   if (searchResult && (!archiveEnabled || mapDimension === dimensionNumber(lastDimension)) && searchResult.coverage.session === map.coverage.session) {
     const drawn = new Set();
@@ -289,21 +309,209 @@ function drawMap () {
       context.strokeStyle = '#fff'; context.lineWidth = .5; context.stroke();
     }
   }
-  if (botPosition && (!archiveEnabled || mapDimension === dimensionNumber(lastDimension))) {
-    context.beginPath(); context.arc(botPosition.x - map.x, botPosition.z - map.z, 1.5, 0, Math.PI * 2);
-    context.fillStyle = '#ef4444'; context.fill(); context.strokeStyle = '#fff'; context.lineWidth = .5; context.stroke();
-  }
-  const targetX = Number(byId('target-x').value); const targetZ = Number(byId('target-z').value);
-  if ((!archiveEnabled || mapDimension === dimensionNumber(lastDimension)) && byId('target-x').value.trim() && byId('target-z').value.trim() && [targetX,targetZ].every(Number.isInteger) &&
-      targetX >= map.x && targetX < map.x + map.width && targetZ >= map.z && targetZ < map.z + map.height) {
-    context.strokeStyle = '#fb923c'; context.lineWidth = .5;
-    context.strokeRect(targetX - map.x - .5, targetZ - map.z - .5, 2, 2);
-  }
   if (mapCursor) {
     context.strokeStyle = '#fff'; context.lineWidth = .4;
     context.strokeRect(mapCursor.x, mapCursor.z, 1, 1);
   }
+  // Code generated/edited by Claude Opus 5.5: bot, target and places are DOM pins above the canvas.
+  updatePins(map);
 }
+/* Code generated/edited by Claude Opus 5.5: map pins, pin overlay, saved places and navigation history. */
+function pinSpecs (map) {
+  const specs = [];
+  const live = !archiveEnabled || mapDimension === dimensionNumber(lastDimension);
+  if (placesEnabled && places.dimension === mapDimension) {
+    for (const poi of places.pois) specs.push({key:'poi:' + poi.id, kind:'poi', x:poi.x + .5, z:poi.z + .5, poi});
+  }
+  const targetX = Number(byId('target-x').value); const targetZ = Number(byId('target-z').value);
+  if (live && byId('target-x').value.trim() && byId('target-z').value.trim() && [targetX,targetZ].every(Number.isInteger)) {
+    specs.push({key:'target', kind:'target', x:targetX + .5, z:targetZ + .5});
+  }
+  if (live && botPosition) specs.push({key:'bot', kind:'bot', x:botPosition.x, z:botPosition.z});
+  return specs.filter(spec => spec.x >= map.x && spec.x < map.x + map.width && spec.z >= map.z && spec.z < map.z + map.height);
+}
+function createPin (spec) {
+  if (spec.kind === 'poi') {
+    // Places are buttons so keyboard users reach them with Tab; Enter selects them as target.
+    const button = document.createElement('button'); button.type = 'button';
+    button.className = 'pin pin-tip'; button.textContent = '📍';
+    button.onclick = () => activatePin(pins.get(spec.key));
+    button.onfocus = () => showOverlay(spec.key);
+    button.onblur = () => { if (overlayPin === spec.key) hideOverlay(); };
+    return button;
+  }
+  const element = document.createElement('span'); element.ariaHidden = 'true';
+  element.className = spec.kind === 'bot' ? 'pin pin-center' : 'pin pin-pushpin';
+  element.textContent = spec.kind === 'bot' ? '🤖' : '📌';
+  return element;
+}
+function updatePins (map) {
+  const next = new Map();
+  for (const spec of pinSpecs(map)) {
+    const pin = pins.get(spec.key) || {key:spec.key, element:createPin(spec)};
+    pin.spec = spec;
+    pin.element.style.left = (spec.x - map.x) / map.width * 100 + '%';
+    pin.element.style.top = (spec.z - map.z) / map.height * 100 + '%';
+    if (spec.kind === 'poi') pin.element.ariaLabel = 'Ort ' + spec.poi.name + ' – X: ' + spec.poi.x + ', Z: ' + spec.poi.z + '. Enter übernimmt ihn als Ziel.';
+    next.set(spec.key, pin);
+  }
+  const changed = next.size !== pins.size || [...next.keys()].some(key => !pins.has(key));
+  pins = next;
+  if (changed) byId('map-pins').replaceChildren(...[...pins.values()].map(pin => pin.element));
+  if (overlayPin) showOverlay(overlayPin);
+}
+function clearPins () {
+  pins = new Map(); byId('map-pins').replaceChildren(); hideOverlay();
+}
+function distanceText (x, z) {
+  if (!botPosition || dimensionNumber(lastDimension) !== places.dimension) return '';
+  return Math.round(Math.hypot(x + .5 - botPosition.x, z + .5 - botPosition.z)) + ' Blöcke entfernt';
+}
+function overlayText (spec) {
+  const hint = lastPointerType === 'touch' ? 'Erneut tippen: als Ziel übernehmen' : 'Klicken: als Ziel übernehmen';
+  if (spec.kind === 'poi') {
+    const distance = distanceText(spec.poi.x, spec.poi.z);
+    return (poiIcons[spec.poi.icon] || '📍') + ' ' + spec.poi.name + '\nX: ' + spec.poi.x + ', Z: ' + spec.poi.z + (distance ? '\n' + distance : '') + '\n' + hint;
+  }
+  if (spec.kind === 'bot') {
+    return '🤖 Bot\nX: ' + botPosition.x.toFixed(1) + ', Y: ' + botPosition.y.toFixed(1) + ', Z: ' + botPosition.z.toFixed(1) + '\n' + byId('nav-status').textContent;
+  }
+  return '📌 Ziel\nX: ' + Math.floor(spec.x) + ', Z: ' + Math.floor(spec.z) + '\n' + (byId('preview-status').textContent || byId('nav-status').textContent);
+}
+function showOverlay (key) {
+  const pin = pins.get(key);
+  if (!pin || !currentMap) { hideOverlay(); return; }
+  overlayPin = key;
+  const overlay = byId('map-pin-overlay');
+  const left = (pin.spec.x - currentMap.x) / currentMap.width * 100;
+  const top = (pin.spec.z - currentMap.z) / currentMap.height * 100;
+  overlay.textContent = overlayText(pin.spec);
+  overlay.style.left = Math.max(15, Math.min(85, left)) + '%';
+  overlay.style.top = top + '%';
+  overlay.className = 'pin-overlay ' + (top < 30 ? 'below' : 'above');
+  overlay.hidden = false;
+}
+function hideOverlay () {
+  overlayPin = null; byId('map-pin-overlay').hidden = true;
+}
+// Pins ignore the pointer so dragging and zooming stay on the canvas; the canvas hit-tests them in screen pixels.
+function pinAt (clientX, clientY) {
+  if (!currentMap) return null;
+  const bounds = canvas.getBoundingClientRect(); const scale = bounds.width / currentMap.width;
+  let best = null; let bestDistance = 20;
+  for (const pin of pins.values()) {
+    const x = bounds.left + (pin.spec.x - currentMap.x) * scale;
+    const z = bounds.top + (pin.spec.z - currentMap.z) * scale - (pin.spec.kind === 'bot' ? 0 : 14);
+    const distance = Math.hypot(clientX - x, clientY - z);
+    // Strictly nearer only: on a tie the earlier pin wins, so a place beats the target or bot on the same cell.
+    if (distance < bestDistance) { best = pin; bestDistance = distance; }
+  }
+  return best;
+}
+function activatePin (pin) {
+  if (!pin || !currentMap) return;
+  hideOverlay();
+  if (pin.spec.kind === 'poi') selectPlaceTarget(pin.spec.poi.x, pin.spec.poi.z, pin.spec.poi.name);
+  else selectMapTarget(pin.spec.x - currentMap.x, pin.spec.z - currentMap.z);
+}
+byId('map-pin-overlay').onclick = () => activatePin(pins.get(overlayPin));
+byId('map-pin-overlay').onpointerleave = () => { if (lastPointerType !== 'touch') hideOverlay(); };
+function selectPlaceTarget (x, z, label) {
+  if (dimensionNumber(lastDimension) !== places.dimension) {
+    byId('nav-feedback').textContent = 'Orte nur in der aktuell verbundenen Dimension ansteuern. „Zum Bot“ öffnet diese Dimension.'; return;
+  }
+  byId('target-x').value = String(x); byId('target-z').value = String(z);
+  byId('nav-feedback').textContent = 'Ziel gewählt – ' + label + ' (X: ' + x + ', Z: ' + z + '). Mit „Navigation starten“ anlaufen; Erreichbarkeit wird dann geprüft.';
+  schedulePreview(); drawMap();
+}
+async function loadPlaces () {
+  if (!placesEnabled) return;
+  if (placesRequest) placesRequest.abort();
+  const controller = placesRequest = new AbortController();
+  placesDimension = mapDimension;
+  try {
+    const response = await fetch('/api/pois?dimension=' + mapDimension, {signal:controller.signal});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error);
+    if (placesRequest !== controller) return;
+    places = result; renderPlaces(); drawMap();
+  } catch (error) {
+    if (placesRequest === controller) byId('poi-feedback').textContent = 'Orte konnten nicht geladen werden: ' + error.message;
+  } finally { if (placesRequest === controller) placesRequest = null; }
+}
+function listButton (label, ariaLabel, onclick) {
+  const button = document.createElement('button'); button.type = 'button';
+  button.textContent = label; button.ariaLabel = ariaLabel; button.onclick = onclick;
+  return button;
+}
+function renderPlaces () {
+  placesRenderedAt = botPosition ? {x:botPosition.x, z:botPosition.z} : null;
+  const live = dimensionNumber(lastDimension) === places.dimension;
+  const distance = poi => botPosition && live ? Math.hypot(poi.x + .5 - botPosition.x, poi.z + .5 - botPosition.z) : 0;
+  const pois = [...places.pois].sort((a, b) => distance(a) - distance(b) || a.name.localeCompare(b.name));
+  byId('poi-list').replaceChildren(...pois.map(poi => {
+    const item = document.createElement('li'); const text = document.createElement('span');
+    const away = distanceText(poi.x, poi.z);
+    text.textContent = (poiIcons[poi.icon] || '📍') + ' ' + poi.name + ' – X: ' + poi.x + ', Z: ' + poi.z + (away ? ' (' + away + ')' : '');
+    const armed = deleteArmed?.id === poi.id;
+    const remove = listButton(armed ? 'Wirklich löschen?' : 'Löschen', (armed ? 'Löschen bestätigen: ' : 'Ort löschen: ') + poi.name, () => deletePoi(poi));
+    remove.className = 'danger';
+    item.append(text, listButton('Ziel', 'Ort ' + poi.name + ' als Ziel übernehmen', () => selectPlaceTarget(poi.x, poi.z, poi.name)), remove);
+    return item;
+  }));
+  byId('poi-empty').hidden = places.pois.length > 0;
+  byId('history-list').replaceChildren(...places.history.map(entry => {
+    const item = document.createElement('li'); const text = document.createElement('span');
+    text.textContent = 'X: ' + entry.x + ', Z: ' + entry.z + ' – ' + new Date(entry.at).toLocaleTimeString('de-DE', {hour:'2-digit', minute:'2-digit'});
+    item.append(text,
+      listButton('Ziel', 'X: ' + entry.x + ', Z: ' + entry.z + ' als Ziel übernehmen', () => selectPlaceTarget(entry.x, entry.z, 'Verlauf')),
+      listButton('Als Ort', 'X: ' + entry.x + ', Z: ' + entry.z + ' als Ort speichern', () => savePoi(entry.x, entry.z)));
+    return item;
+  }));
+  byId('history-empty').hidden = places.history.length > 0;
+}
+async function deletePoi (poi) {
+  if (deleteArmed?.id !== poi.id) {
+    if (deleteArmed) clearTimeout(deleteArmed.timer);
+    deleteArmed = {id:poi.id, timer:setTimeout(() => { deleteArmed = null; renderPlaces(); }, 4000)};
+    renderPlaces(); return;
+  }
+  clearTimeout(deleteArmed.timer); deleteArmed = null;
+  try {
+    const response = await fetch('/api/pois/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:poi.id})});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error);
+    byId('poi-feedback').textContent = 'Ort „' + poi.name + '“ gelöscht.';
+  } catch (error) { byId('poi-feedback').textContent = 'Löschen fehlgeschlagen: ' + error.message; }
+  void loadPlaces();
+}
+async function savePoi (x, z) {
+  const name = byId('poi-name').value.trim();
+  const dimension = dimensionNumber(lastDimension);
+  if (!name) { byId('poi-feedback').textContent = 'Zuerst einen Namen eingeben.'; byId('poi-name').focus?.(); return; }
+  if (dimension === null) { byId('poi-feedback').textContent = 'Dimension unbekannt; erst verbinden.'; return; }
+  try {
+    const response = await fetch('/api/pois', {method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name, icon:byId('poi-icon').value, x, z, dimension})});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error);
+    byId('poi-name').value = '';
+    byId('poi-feedback').textContent = 'Ort „' + result.poi.name + '“ gespeichert (X: ' + x + ', Z: ' + z + ').' +
+      (dimension !== mapDimension ? ' Er gehört zur verbundenen Dimension.' : '');
+  } catch (error) { byId('poi-feedback').textContent = 'Speichern fehlgeschlagen: ' + error.message; }
+  void loadPlaces();
+}
+byId('poi-save-target').onclick = () => {
+  const x = Number(byId('target-x').value); const z = Number(byId('target-z').value);
+  if (!byId('target-x').value.trim() || !byId('target-z').value.trim() || ![x,z].every(n => Number.isInteger(n) && Math.abs(n) <= 30000000)) {
+    byId('poi-feedback').textContent = 'Zuerst ein gültiges Ziel wählen.'; return;
+  }
+  return savePoi(x, z);
+};
+byId('poi-save-bot').onclick = () => {
+  if (!botPosition) { byId('poi-feedback').textContent = 'Bot-Position unbekannt.'; return; }
+  return savePoi(Math.floor(botPosition.x), Math.floor(botPosition.z));
+};
 function describeMapCell (x, z) {
   if (!currentMap) return;
   const map = currentMap;
@@ -316,6 +524,8 @@ function describeMapCell (x, z) {
   drawMap();
 }
 canvas.onpointerdown = event => {
+  // Code generated/edited by Claude Opus 5.5: touch shows a pin's overlay first, mouse uses hover.
+  lastPointerType = event.pointerType || 'mouse';
   if (!archiveEnabled || !view || (event.button !== undefined && event.button !== 0)) return;
   drag = { x: event.clientX, z: event.clientY, view: { ...view } }; dragged = false;
   canvas.setPointerCapture(event.pointerId);
@@ -335,25 +545,37 @@ function applyPointer () {
       // Reuse the current raster while dragging; request the final viewport on release.
       context.clearRect(0, 0, canvas.width, canvas.height);
       ground.style.transform = 'translate(' + (drag.view.x - view.x) / view.size * bounds.width + 'px,' + (drag.view.z - view.z) / view.size * bounds.height + 'px)';
+      // Code generated/edited by Claude Opus 5.5: pins move with the terrain while dragging.
+      byId('map-pins').style.transform = ground.style.transform; hideOverlay();
       return;
     }
   }
   const x = Math.floor((event.clientX - bounds.left) / bounds.width * currentMap.width);
   const z = Math.floor((event.clientY - bounds.top) / bounds.height * currentMap.height);
   if (mapCursor?.x !== x || mapCursor?.z !== z) describeMapCell(x, z);
+  // Code generated/edited by Claude Opus 5.5: hovering a pin shows its overlay.
+  if (event.pointerType !== 'touch') {
+    const pin = pinAt(event.clientX, event.clientY);
+    if (pin) { if (overlayPin !== pin.key) showOverlay(pin.key); }
+    else if (overlayPin && lastPointerType !== 'touch') hideOverlay();
+    canvas.style.cursor = pin?.spec.kind === 'poi' ? 'pointer' : '';
+  }
 }
 canvas.onpointermove = event => {
-  pointerEvent = { clientX: event.clientX, clientY: event.clientY };
+  // Code generated/edited by Claude Opus 5.5
+  pointerEvent = { clientX: event.clientX, clientY: event.clientY, pointerType: event.pointerType };
   if (pointerFrame === null) pointerFrame = requestAnimationFrame(applyPointer);
 };
 canvas.onpointerup = event => {
   if (!drag) return;
-  pointerEvent = { clientX: event.clientX, clientY: event.clientY }; applyPointer();
-  drag = null; ground.style.transform = '';
+  // Code generated/edited by Claude Opus 5.5: keep the pointer type so lifting a finger is not taken as a hover.
+  pointerEvent = { clientX: event.clientX, clientY: event.clientY, pointerType: event.pointerType }; applyPointer();
+  // Code generated/edited by Claude Opus 5.5
+  drag = null; ground.style.transform = ''; byId('map-pins').style.transform = '';
   if (dragged) invalidateView();
 };
 canvas.onpointercancel = () => {
-  if (drag) { view = drag.view; drag = null; ground.style.transform = ''; drawMap(); }
+  if (drag) { view = drag.view; drag = null; ground.style.transform = ''; byId('map-pins').style.transform = ''; drawMap(); }
   dragged = false;
 };
 canvas.onwheel = event => {
@@ -363,6 +585,14 @@ canvas.onwheel = event => {
 canvas.onclick = event => {
   if (dragged) { dragged = false; return; }
   if (!currentMap) return;
+  // Code generated/edited by Claude Opus 5.5: first tap on a pin shows its overlay, the next tap marks it;
+  // a mouse click on a place selects it directly, while bot and target pins keep the plain cell click.
+  const pin = pinAt(event.clientX, event.clientY);
+  if (lastPointerType === 'touch') {
+    if (pin && overlayPin !== pin.key) { showOverlay(pin.key); return; }
+    hideOverlay();
+    if (pin) { activatePin(pin); return; }
+  } else if (pin?.spec.kind === 'poi') { activatePin(pin); return; }
   const bounds = canvas.getBoundingClientRect();
   selectMapTarget((event.clientX - bounds.left) / bounds.width * currentMap.width, (event.clientY - bounds.top) / bounds.height * currentMap.height);
 };
@@ -581,6 +811,11 @@ events.onmessage = event => {
       view = { ...view, x, z }; mapDirty = true;
       if (mapRequest) mapRequest.abort(); mapRequest = null;
     }
+  }
+  // Code generated/edited by Claude Opus 5.5: refetch places after server-side changes or a dimension switch; refresh distances after movement.
+  if (placesEnabled) {
+    if (state.placesRevision !== placesRevision || placesDimension !== mapDimension) { placesRevision = state.placesRevision; void loadPlaces(); }
+    else if (botPosition && (!placesRenderedAt || Math.hypot(botPosition.x - placesRenderedAt.x, botPosition.z - placesRenderedAt.z) >= 4)) renderPlaces();
   }
   if (navigationBusy || !registryReady) cancelPreview();
   else if (previewWanted && previewContext !== JSON.stringify([worldSession,latestRevision,navigationBusy,botPosition,byId('target-x').value,byId('target-z').value])) schedulePreview();

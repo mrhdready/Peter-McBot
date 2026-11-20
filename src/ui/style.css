@@ -52,6 +52,28 @@ input { min-width: 0; width: 100%; }
 .legend { bottom: .5rem; left: .5rem; list-style: none; padding: .35rem .55rem; font-size: .75rem; pointer-events: none;
   display: grid; grid-template-columns: repeat(2, auto); gap: .1rem .8rem; }
 .legend i { display: inline-block; width: .75rem; height: .75rem; margin-right: .35rem; vertical-align: -.1rem; border-radius: 2px; border: 1px solid rgb(255 255 255 / .3); }
+/* Code generated/edited by Claude Opus 5.5: map pins, pin overlay and the places panel. */
+.legend .legend-line { height: 2px; border: 0; border-radius: 0; background: #c084fc; vertical-align: .2rem; }
+.legend-pin { display: inline-block; width: .75rem; margin-right: .35rem; text-align: center; }
+#map-pins { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.pin { position: absolute; margin: 0; padding: 0; border: 0; border-radius: 0; background: none; font-size: 1.5rem; line-height: 1;
+  pointer-events: none; filter: drop-shadow(0 1px 1px rgb(0 0 0 / .8)); }
+.pin-tip { transform: translate(-50%, -100%); }
+.pin-pushpin { transform: translate(-25%, -90%); }
+.pin-center { transform: translate(-50%, -50%); }
+.pin:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pin-overlay { position: absolute; z-index: 3; margin: 0; max-width: 15rem; padding: .4rem .6rem; font-size: .85rem; white-space: pre-line;
+  background: rgb(17 24 39 / .92); border: 1px solid var(--border-strong); border-radius: var(--radius); cursor: pointer; }
+.pin-overlay.above { transform: translate(-50%, calc(-100% - 2rem)); }
+.pin-overlay.below { transform: translate(-50%, 1rem); }
+.pin-overlay[hidden] { display: none; }
+.poi-fields { display: grid; grid-template-columns: 1fr auto; gap: .2rem .5rem; }
+.poi-fields label { font-size: .85rem; color: var(--muted); }
+.place-list { list-style: none; margin: .4rem 0 0; padding: 0; max-height: 30vh; overflow-y: auto; }
+.place-list li { display: flex; align-items: center; gap: .4rem; padding: .3rem 0; border-bottom: 1px solid var(--border); font-size: .9rem; }
+.place-list li span { flex: 1; overflow-wrap: anywhere; }
+.place-list button { padding: .15rem .5rem; font-size: .85rem; }
+.place-list button.danger { border-color: var(--danger); color: var(--danger); }
 
 #sidebar { overflow-y: auto; padding: .75rem .75rem .75rem 0; display: flex; flex-direction: column; gap: .75rem; }
 .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: .8rem; }

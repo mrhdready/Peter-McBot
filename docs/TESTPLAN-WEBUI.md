@@ -38,10 +38,26 @@ Kernfall der Neugestaltung: **kein Scrollen der Seite** zwischen Zielwahl und St
 | # | Schritt | Erwartung | Ergebnis |
 |---|---|---|---|
 | 3.1 | Fenster ca. 1400 × 850 | Karte links, Seitenleiste rechts, Seite selbst scrollt nicht | |
-| 3.2 | Auf die Karte klicken | X/Z im Panel „Ziel & Navigation“ gesetzt, oranger Rahmen auf der Karte, lila Vorschau erscheint; Bot bewegt sich **nicht** | |
-| 3.3 | „Navigation starten“ (sichtbar ohne Scrollen) | Bot läuft los, Status „Unterwegs …“, lila Restweg | |
+| 3.2 | Auf die Karte klicken | X/Z im Panel „Ziel & Navigation“ gesetzt, 📌 auf der Karte, dünne gestrichelte lila Vorschau erscheint; Bot bewegt sich **nicht** | |
+| 3.3 | „Navigation starten“ (sichtbar ohne Scrollen) | Bot läuft los, Status „Unterwegs …“, durchgezogener lila Restweg | |
 | 3.4 | „Stopp“ | Bot hält an, Status „Gestoppt“ | |
-| 3.5 | X/Z manuell eintippen | Vorschau aktualisiert sich, Rahmen springt mit | |
+| 3.5 | X/Z manuell eintippen | Vorschau aktualisiert sich, 📌 springt mit | |
+| 3.6 | Mehrfach zoomen | Linie und Pins behalten ihre Bildschirmgröße; Pinspitze sitzt auf der Zielzelle | |
+
+## 3a. Orte, Verlauf und Pins
+
+| # | Schritt | Erwartung | Ergebnis |
+|---|---|---|---|
+| 3a.1 | Name eingeben, Symbol wählen, „Ziel speichern“ | Ort erscheint in „Orte“ und als 📍 auf der Karte | |
+| 3a.2 | „Bot-Position speichern“ ohne Namen | Hinweis „Zuerst einen Namen eingeben“, nichts gespeichert | |
+| 3a.3 | Maus auf 📍, 📌 und 🤖 | Overlay mit Symbol/Name, X/Z, Entfernung bzw. Status; verschwindet beim Wegbewegen | |
+| 3a.4 | 📍 anklicken | Ort wird Ziel, Vorschau erscheint, keine Bewegung | |
+| 3a.5 | Karte über einem Pin ziehen und zoomen | Karte verschiebt/zoomt wie gewohnt, Pins wandern mit | |
+| 3a.6 | „Löschen“, dann „Wirklich löschen?“ | Erst der zweite Klick löscht; ohne zweiten Klick setzt sich der Button nach ca. 4 s zurück | |
+| 3a.7 | Navigation starten | Ziel erscheint oben unter „Zuletzt angesteuert“; gleiches Ziel erneut rückt nach oben statt doppelt | |
+| 3a.8 | Zweiter Browser offen | Neuer/gelöschter Ort erscheint dort ohne Neuladen | |
+| 3a.9 | Prozess neu starten | Orte und Verlauf bleiben erhalten | |
+| 3a.10 | Mit Tab zu einem 📍 | Fokusrahmen und Overlay; Enter übernimmt das Ziel | |
 
 ## 4. Blocksuche
 
@@ -59,6 +75,7 @@ Kernfall der Neugestaltung: **kein Scrollen der Seite** zwischen Zielwahl und St
 | 5.1 | Seite laden | Karte oben, quadratisch, ohne große Leerflächen; Panels darunter | |
 | 5.2 | Leiste unten | X, Z, „Navigation starten“, „Stopp“ immer sichtbar, auch beim Scrollen bis zur Trefferliste | |
 | 5.3 | Karte antippen, dann Start in der Leiste | Ziel gesetzt, Start ohne Scrollen möglich | |
+| 5.3a | 📍 antippen, dann Overlay antippen | Erstes Tippen zeigt nur das Overlay; zweites Tippen übernimmt den Ort als Ziel | |
 | 5.4 | Ende der Seite | Hilfe und Trefferliste werden nicht von der Leiste verdeckt | |
 | 5.5 | Karte ziehen | Seite scrollt dabei nicht mit | |
 

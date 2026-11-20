@@ -124,11 +124,14 @@ test('map markers select underground hits, survive map refresh and discard obsol
     if(key==='strokeRect')return (...args)=>rectangles.push({args,color:context.strokeStyle})
     if(key==='beginPath')return ()=>{points=[]}
     if(key==='moveTo'||key==='lineTo')return (...args)=>points.push(args)
-    if(key==='stroke')return ()=>strokes.push({color:context.strokeStyle,points:points.map(p=>[...p])})
+    // Code generated/edited by Claude Opus 5.5: records the line width and dash pattern of the route.
+    if(key==='stroke')return ()=>strokes.push({color:context.strokeStyle,width:context.lineWidth,dash:target.dash||[],points:points.map(p=>[...p])})
+    if(key==='setLineDash')return dash=>{target.dash=dash}
     return target[key]||(()=>{})
   } })
+  // Code generated/edited by Claude Opus 5.5: elements expose `style` for the DOM pins.
   const element = () => ({
-    children: [], textContent: '', value: '', hidden: false, disabled: false,
+    children: [], textContent: '', value: '', hidden: false, disabled: false, style: {},
     replaceChildren (...children) { this.children = children },
     append (child) { this.children.push(child) },
     getContext: () => context,
@@ -171,6 +174,14 @@ test('map markers select underground hits, survive map refresh and discard obsol
   const submit = () => byId('search').onsubmit({ preventDefault () {} })
   await publish()
   assert.deepEqual(strokes.filter(s=>s.color==='#c084fc').at(-1).points,[[16,16],[16.5,16.5],[14.5,16.5],[14.5,19.5]],'Route projects actual world positions into the map')
+  // Code generated/edited by Claude Opus 5.5: 2 screen pixels at 1 pixel per block; active navigation is solid.
+  assert.equal(strokes.filter(s=>s.color==='#c084fc').at(-1).width,2)
+  // The dash array comes from the vm realm, so compare its length instead of its prototype.
+  assert.equal(strokes.filter(s=>s.color==='#c084fc').at(-1).dash.length,0)
+  const botPin = byId('map-pins').children.find(pin => pin.textContent === '🤖')
+  assert.ok(botPin, 'The bot is a pin')
+  assert.equal(botPin.style.left, '50%')
+  assert.equal(botPin.style.top, '50%')
   state.position={x:-.5,y:69.62,z:.5}
   state.navigation.path=state.navigation.path.slice(1);state.navigation.remaining=2
   await publish()
@@ -222,7 +233,11 @@ test('map markers select underground hits, survive map refresh and discard obsol
   assert.equal(byId('target-z').value, '-1')
   assert.equal(navigationCount(), beforeClick, 'Selecting a target must not start movement')
   assert.match(byId('nav-feedback').textContent, /Ziel gewählt.*X: -1, Z: -1/)
-  assert.ok(rectangles.some(r => r.color === '#fb923c' && r.args.join(',') === '14.5,14.5,2,2'), 'Chosen target has an orange marker')
+  // Code generated/edited by Claude Opus 5.5
+  const targetPin = byId('map-pins').children.find(pin => pin.textContent === '📌')
+  assert.ok(targetPin, 'Chosen target has a pin')
+  assert.equal(targetPin.style.left, (15.5 / 32 * 100) + '%')
+  assert.equal(targetPin.style.top, (15.5 / 32 * 100) + '%')
   assert.match(byId('map-hit-info').textContent, /minecraft:diamond_ore – X: -1, Y: 5, Z: -1/)
   const choices = byId('map-hit-options').children
   assert.equal(choices.length, 2, 'Both vertical hits at one X/Z remain selectable')

@@ -4,6 +4,8 @@ import { readConfig } from './config.js'
 import { BotController } from './bot.js'
 import { createWebServer } from './web.js'
 import { MapArchive } from './map-archive.js'
+// Code generated/edited by Claude Opus 5.5
+import { PlaceStore } from './places.js'
 
 const config = readConfig()
 try { console.log('BDS operator key pin (SHA-256): ' + readFileSync('./data/server-key.sha256', 'utf8').trim()) }
@@ -20,11 +22,14 @@ const bot = new BotController(config, options => {
   }
   return createClient(clientOptions)
 }, () => web.broadcast())
-const archive = new MapArchive('./data/maps', JSON.stringify([config.host.toLowerCase(), config.port, config.transport]), config.mapWorldId)
+// Code generated/edited by Claude Opus 5.5: places share the map archive's server/world key.
+const mapServer = JSON.stringify([config.host.toLowerCase(), config.port, config.transport])
+const archive = new MapArchive('./data/maps', mapServer, config.mapWorldId)
+const places = new PlaceStore('./data/places', mapServer, config.mapWorldId)
 bot.state.onSurfaceTile = tile => archive.observe(tile)
 const mapTimer = setInterval(() => { void archive.flush().catch(error => console.error('Map persistence:', error)) }, 5000)
 mapTimer.unref()
-const web = createWebServer(bot, archive)
+const web = createWebServer(bot, archive, places)
 web.server.on('error', error => {
   console.error(error)
   bot.stop()

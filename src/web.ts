@@ -1,18 +1,21 @@
 import { createServer, type ServerResponse } from 'node:http'
 import type { BotController, Command } from './bot.js'
-import { WorldError } from './world.js'
+import { WorldError, dimensionId } from './world.js'
 import { MapArchive } from './map-archive.js'
+// Code generated/edited by Claude Opus 5.5
+import { POI_ICONS, type PlaceStore } from './places.js'
 import { mapPerformancePanel, mapRuntimeMetrics } from './map-performance.js'
 // Code generated/edited by Claude Opus 5.5
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 
-export function createWebServer (bot: BotController, archive?: MapArchive) {
+// Code generated/edited by Claude Opus 5.5: optional place store (POIs, navigation history); its revision rides along in SSE.
+export function createWebServer (bot: BotController, archive?: MapArchive, places?: PlaceStore) {
   const streams = new Set<ServerResponse>()
   let mapClients = 0
   let metrics: ReturnType<typeof mapRuntimeMetrics> | null = null
   let metricsAt = 0
-  const snapshot = () => JSON.stringify(bot.state.snapshot())
+  const snapshot = () => JSON.stringify(places ? { ...bot.state.snapshot(), placesRevision: places.revision } : bot.state.snapshot())
   const broadcast = () => {
     const data = `data: ${snapshot()}\n\n`
     for (const response of streams) {
@@ -77,7 +80,9 @@ export function createWebServer (bot: BotController, archive?: MapArchive) {
         .catch(error => reply(error instanceof WorldError ? error.status : 500, { error: error instanceof WorldError ? error.message : 'Map failed' }))
     } else if (request.method === 'GET' && ['/', '/?measure=1'].includes(request.url || '')) {
       response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'" })
+      // Code generated/edited by Claude Opus 5.5
       const content = page.replace('const archiveEnabled = false;', `const archiveEnabled = ${Boolean(archive)};`)
+        .replace('const placesEnabled = false;', `const placesEnabled = ${Boolean(places)};`)
       response.end(request.url === '/?measure=1' ? content.replace('</html>', mapPerformancePanel + '</html>') : content)
     } else if (request.method === 'GET' && request.url === '/api/status') {
       reply(200, bot.state.snapshot())
@@ -91,6 +96,37 @@ export function createWebServer (bot: BotController, archive?: MapArchive) {
       streams.add(response)
       response.write(`data: ${snapshot()}\n\n`)
       response.on('close', () => streams.delete(response))
+    // Code generated/edited by Claude Opus 5.5: saved places and navigation history of one dimension.
+    } else if (request.method === 'GET' && request.url?.split('?')[0] === '/api/pois') {
+      if (!places) return reply(404, { error: 'Places are unavailable' })
+      if (request.url.length > 128) return reply(400, { error: 'Query is too long' })
+      const dimension = Number(new URL(request.url, 'http://localhost').searchParams.get('dimension') || NaN)
+      void places.list(dimension).then(result => reply(200, { dimension, icons: POI_ICONS, revision: places.revision, ...result }))
+        .catch(error => reply(error instanceof WorldError ? error.status : 500, { error: error instanceof WorldError ? error.message : 'Places failed' }))
+    } else if (request.method === 'POST' && ['/api/pois', '/api/pois/delete'].includes(request.url || '')) {
+      if (!places) return reply(404, { error: 'Places are unavailable' })
+      if (request.headers.origin && request.headers.origin !== `http://${request.headers.host}` && request.headers.origin !== `https://${request.headers.host}`) return reply(403, { error: 'Foreign origin rejected' })
+      if (request.headers['content-type'] !== 'application/json') return reply(415, { error: 'Use application/json' })
+      const limit = 512
+      if (Number(request.headers['content-length'] || 0) > limit) { request.resume(); return reply(413, { error: `Body exceeds ${limit} bytes` }) }
+      const chunks: Buffer[] = []; let bytes = 0; let rejected = false
+      request.on('data', (chunk: Buffer) => {
+        bytes += chunk.length
+        if (bytes > limit) { rejected = true; chunks.length = 0; reply(413, { error: `Body exceeds ${limit} bytes` }) }
+        else if (!rejected) chunks.push(chunk)
+      })
+      request.on('end', () => {
+        if (rejected) return
+        let body: Record<string, unknown>
+        try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch { return reply(400, { error: 'Invalid JSON' }) }
+        if (!body || typeof body !== 'object' || Array.isArray(body)) return reply(400, { error: 'Provide a JSON object' })
+        const work: Promise<{ code: number; body: unknown }> = request.url === '/api/pois'
+          ? places.add({ name: body.name, icon: body.icon, x: body.x, z: body.z, dimension: body.dimension }).then(poi => ({ code: 201, body: { poi } }))
+          : places.remove(body.id).then(() => ({ code: 200, body: { deleted: body.id } }))
+        void work.then(result => { reply(result.code, result.body); broadcast() })
+          .catch(error => reply(error instanceof WorldError ? error.status : 500, { error: error instanceof WorldError ? error.message : 'Places failed' }))
+      })
+      request.on('error', () => reply(400, { error: 'Incomplete request' }))
     } else if (request.method === 'POST' && ['/api/connect', '/api/disconnect', '/api/navigate', '/api/preview', '/api/stop_navigation'].includes(request.url || '')) {
       if (request.headers.origin && request.headers.origin !== `http://${request.headers.host}` && request.headers.origin !== `https://${request.headers.host}`) return reply(403, { error: 'Foreign origin rejected' })
       if (request.headers['content-type'] !== 'application/json') return reply(415, { error: 'Use application/json' })
@@ -115,7 +151,13 @@ export function createWebServer (bot: BotController, archive?: MapArchive) {
               return
             }
             if (bot.state.status !== 'spawned') return reply(409, { error: 'Bot must be spawned before navigation' })
-            reply(bot.enqueue({ type: 'navigate', x: target.x, z: target.z }) ? 202 : 503, { command: 'navigate', target })
+            // Code generated/edited by Claude Opus 5.5: every accepted navigation target enters the history.
+            const accepted = bot.enqueue({ type: 'navigate', x: target.x, z: target.z })
+            const dimension = dimensionId(bot.state.dimension)
+            if (accepted && places && dimension !== null) {
+              void places.recordNavigation(dimension, target.x, target.z).then(broadcast).catch(error => console.error('Places:', error))
+            }
+            reply(accepted ? 202 : 503, { command: 'navigate', target })
           } catch { reply(400, { error: 'Invalid JSON target' }) }
         })
         request.on('error', () => reply(400, { error: 'Incomplete target request' }))

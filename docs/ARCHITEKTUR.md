@@ -2,7 +2,7 @@
 
 ## Module
 
-`bot.ts` verarbeitet Befehle im zentralen 20-Hz-Takt. `state.ts` und `world.ts` verwalten Position, Dimension, Chunks und Abdeckung. `chunk-worker.ts` decodiert Blockdaten außerhalb der Hauptschleife. `web.ts` stellt HTTP und SSE bereit und liefert das Webinterface aus. Dessen Quellen liegen in `src/ui/` (`index.html`, `style.css`, `app.js`); `pnpm build` kopiert sie nach `dist/ui/`, `web.ts` liest sie einmal beim Start und bettet Stil und Skript inline ein (CSP erlaubt nur Inline-Code, ein Frontend-Build entfällt). `map-archive.ts` persistiert Oberflächenkacheln, `map-performance.ts` liefert den zuschaltbaren Messmodus und Laufzeitzähler. `healthcheck.ts` prüft den HTTP-Prozess mit dem schlanken Standard-HTTP-Client.
+`bot.ts` verarbeitet Befehle im zentralen 20-Hz-Takt. `state.ts` und `world.ts` verwalten Position, Dimension, Chunks und Abdeckung. `chunk-worker.ts` decodiert Blockdaten außerhalb der Hauptschleife. `web.ts` stellt HTTP und SSE bereit und liefert das Webinterface aus. Dessen Quellen liegen in `src/ui/` (`index.html`, `style.css`, `app.js`); `pnpm build` kopiert sie nach `dist/ui/`, `web.ts` liest sie einmal beim Start und bettet Stil und Skript inline ein (CSP erlaubt nur Inline-Code, ein Frontend-Build entfällt). `map-archive.ts` persistiert Oberflächenkacheln, `places.ts` gespeicherte Orte und den Navigationsverlauf, `map-performance.ts` liefert den zuschaltbaren Messmodus und Laufzeitzähler. `healthcheck.ts` prüft den HTTP-Prozess mit dem schlanken Standard-HTTP-Client.
 
 `pathfinder.ts` enthält den gemeinsamen portionsweisen A*-Planner für Vorschau und Navigation. `terrain.ts` prüft Kollisionsformen, Kopffreiheit und Landeflächen. `navigation.ts` setzt die Bewegung in Protokolleingaben um. Die Vorschau verändert weder Position noch aktive Navigation und sendet keine Bewegungspakete.
 
@@ -16,7 +16,7 @@ Während der Navigation werden kleine Serverkorrekturen (höchstens 0,5 Block ne
 
 Der Cache hält einen Kreisradius von vier bis sechs Chunks. Beim Standardradius vier sind das 49 Spalten beziehungsweise 1176 Subchunks in der Overworld. Fehlende Spalten werden ausdrücklich angefordert, auch ohne neue Serverankündigung. Fehlgeschlagene Abschnittsanfragen werden begrenzt und zeitlich gestaffelt wiederholt. Unbekannte Daten gelten nicht als Luft.
 
-Die Draufsicht zeigt höchste bekannte Blöcke, keine verbindliche Navigationshöhe. Rot markiert den Bot, Türkis Suchtreffer, Orange das gewählte Ziel und Lila Vorschau oder Restweg. Neue Weltdaten, Chunkwechsel und Ankunft aktualisieren die Karte; unveränderte Daten werden periodisch geprüft. SSE aktualisiert den Status ungefähr jede Sekunde.
+Die Draufsicht zeigt höchste bekannte Blöcke, keine verbindliche Navigationshöhe. Bot (🤖), Ziel (📌) und gespeicherte Orte (📍) erscheinen als Pins, Suchtreffer als türkise Punkte. Eine dünne lila Linie zeigt gestrichelt die Vorschau und durchgezogen den Restweg. Neue Weltdaten, Chunkwechsel und Ankunft aktualisieren die Karte; unveränderte Daten werden periodisch geprüft. SSE aktualisiert den Status ungefähr jede Sekunde.
 
 Das Gelände wird kachelweise als Pixelpuffer gerastert; Blockfarben und Raster werden wiederverwendet. Cursor, Bot und Route liegen auf einer separaten Ebene, Mausereignisse werden über `requestAnimationFrame` gebündelt. Leichter heller Nebel markiert historische Daten. Der Ausschnitt reicht von standardmäßig 112 × 112 bis maximal 448 × 448 Blöcke. Große Ausschnitte verwenden begrenzte Teilabfragen; die gesamte Welt wird nicht in den Browser geladen.
 
@@ -32,9 +32,14 @@ Das Gelände wird kachelweise als Pixelpuffer gerastert; Blockfarben und Raster 
 - `POST /api/preview`: JSON `{"x": 10, "z": -20}`; ausschließlich Planung ohne Bewegung.
 - `POST /api/navigate`: dasselbe X/Z-Format; HTTP 202 bedeutet eingereiht, nicht angekommen.
 - `POST /api/connect`, `/api/disconnect`, `/api/stop_navigation`: ohne Body.
+- `GET /api/pois?dimension=0`: gespeicherte Orte und die letzten zehn angenommenen Navigationsziele dieser Dimension sowie die erlaubten Symbole.
+- `POST /api/pois`: JSON `{"name": "Basis", "icon": "home", "x": 5, "z": -3, "dimension": 0}`; Name 1–40 Zeichen, höchstens 200 Orte je Dimension (sonst HTTP 409), Body höchstens 512 Byte. Antwort HTTP 201.
+- `POST /api/pois/delete`: JSON `{"id": "…"}`; unbekannte IDs ergeben HTTP 404.
+
+Jede Änderung an Orten oder Verlauf erhöht `placesRevision` im SSE-Status; Clients laden die Liste dann neu. Ohne übergebenen `PlaceStore` antworten die Ortsrouten mit HTTP 404.
 
 POST-Aufrufe benötigen `Content-Type: application/json`; fremde Browser-Origin-Header werden abgelehnt. Diese Prüfung ersetzt keine Authentifizierung. Zielkörper sind auf 128 Byte und ganzzahlige X/Z-Koordinaten begrenzt. Client-Prognosen werden von bestätigten Serverpositionen unterschieden.
 
 ## Lokale Dateien
 
-`data/` enthält lokale Identitäts-/Vertrauensdaten, bewusst erzeugte Testberichte und persistierte Oberflächen unter `data/maps/`. Vollständige Chunks bleiben im Arbeitsspeicher; historische Oberflächen werden niemals als Navigationsgelände verwendet. Serveradresse, `MAP_WORLD_ID` und Dimension trennen die Archive; beim Weltreset muss der Kartenschlüssel geändert werden. Weder Laufzeitdateien noch generierte Deployment-Pakete werden versioniert. Ausgefüllte Konfigurationen bleiben lokal; nur ihre `.example`-Dateien gehören ins Repository.
+`data/` enthält lokale Identitäts-/Vertrauensdaten, bewusst erzeugte Testberichte, persistierte Oberflächen unter `data/maps/` und gespeicherte Orte samt Navigationsverlauf unter `data/places/` (eine Datei je Server und `MAP_WORLD_ID`). Vollständige Chunks bleiben im Arbeitsspeicher; historische Oberflächen werden niemals als Navigationsgelände verwendet. Serveradresse, `MAP_WORLD_ID` und Dimension trennen die Archive; beim Weltreset muss der Kartenschlüssel geändert werden. Weder Laufzeitdateien noch generierte Deployment-Pakete werden versioniert. Ausgefüllte Konfigurationen bleiben lokal; nur ihre `.example`-Dateien gehören ins Repository.
