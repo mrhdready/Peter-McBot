@@ -56,7 +56,6 @@ export class Terrain {
     return null
   }
 
-  // Code generated/edited by Claude Opus 5.5
   // True when walking from feet height y into block column (bx, bz) could drop the player by about one block or more,
   // or into unknown data. Walls and step-ups at body height are not drop hazards.
   dropHazard (bx: number, bz: number, y: number) {

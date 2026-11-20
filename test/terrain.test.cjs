@@ -153,7 +153,6 @@ test('server correction during an authorized ascent settles and replans; unrelat
   assert.equal(world.navigation.status,'error')
 })
 
-/* Code generated/edited by Claude Opus 5.5 */
 test('drop hazards cover holes, deep drops and unknown data but not walls or half steps', () => {
   const { terrain, set } = fixture()
   assert.equal(terrain.dropHazard(1,0,0),false,'Flat ground')

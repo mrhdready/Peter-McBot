@@ -1,4 +1,4 @@
-/* Code generated/edited by Claude Opus 5.5: map-centred layout with sidebar; stacked with a fixed navigation bar below 900px. */
+/* Map-centred layout with sidebar; stacked with a fixed navigation bar below 900px. */
 :root {
   --bg: #111827; --surface: #1f2937; --surface-2: #273449; --border: #374151; --border-strong: #475569;
   --text: #f3f4f6; --muted: #9ca3af; --accent: #93c5fd; --primary: #2563eb; --primary-text: #fff;
@@ -52,7 +52,7 @@ input { min-width: 0; width: 100%; }
 .legend { bottom: .5rem; left: .5rem; list-style: none; padding: .35rem .55rem; font-size: .75rem; pointer-events: none;
   display: grid; grid-template-columns: repeat(2, auto); gap: .1rem .8rem; }
 .legend i { display: inline-block; width: .75rem; height: .75rem; margin-right: .35rem; vertical-align: -.1rem; border-radius: 2px; border: 1px solid rgb(255 255 255 / .3); }
-/* Code generated/edited by Claude Opus 5.5: map pins, pin overlay and the places panel. */
+/* Map pins, pin overlay and the places panel. */
 .legend .legend-line { height: 2px; border: 0; border-radius: 0; background: #111111; box-shadow: 0 0 0 1px rgb(255 255 255 / .55); vertical-align: .2rem; }
 .legend-pin { display: inline-block; width: .75rem; margin-right: .35rem; text-align: center; }
 #map-pins { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
@@ -96,6 +96,11 @@ th, td { text-align: left; padding: .35rem .4rem; border-bottom: 1px solid var(-
 td button { padding: .15rem .5rem; font-size: .85rem; }
 .help summary { cursor: pointer; font-weight: 600; }
 .help p { font-size: .9rem; color: var(--muted); }
+.skin summary { cursor: pointer; font-weight: 600; }
+.skin-preview { display: block; margin: .6rem 0 .3rem; image-rendering: pixelated; background: var(--border); border-radius: 4px; }
+.skin-fields { display: grid; grid-template-columns: auto 1fr; gap: .4rem .6rem; align-items: center; margin-top: .4rem; }
+.skin-fields input, .skin-fields select { min-width: 0; }
+.skin .actions { flex-wrap: wrap; }
 
 @media (max-width: 900px) {
   body { display: block; height: auto; padding-bottom: 7.5rem; }

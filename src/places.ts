@@ -1,5 +1,4 @@
 /*
- * Code generated/edited by Claude Opus 5.5
  * Saved places (POIs) and the recent navigation targets, persisted per server/world like the map archive.
  * One JSON file per server/world under data/places/; writes go to a temp file and are renamed atomically.
  * Every operation runs exclusively and commits in memory only after the write succeeded.

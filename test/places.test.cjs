@@ -1,4 +1,4 @@
-/* Code generated/edited by Claude Opus 5.5: saved places, navigation history, their HTTP API and the map pins. */
+/* Saved places, navigation history, their HTTP API and the map pins. */
 const { test } = require('node:test')
 const assert = require('node:assert/strict')
 const { once } = require('node:events')
@@ -225,7 +225,7 @@ test('map pins show an overlay on hover or first tap and select places as target
   assert.equal(byId('poi-list').children.length, 0)
   assert.ok(!byId('map-pins').children.some(pin => pin.textContent === '📍'), 'A deleted place loses its pin')
   assert.equal(byId('poi-empty').hidden, false)
-  // Code generated/edited by Claude Opus 5.5: arrival removes the target pin; another pending target stays.
+  // Arrival removes the target pin; another pending target stays.
   byId('target-x').value = '5'; byId('target-z').value = '-3'
   state.navigation = { ...state.navigation, status: 'arrived', target: { x: 9, z: 9 } }; await publish()
   assert.equal(byId('target-x').value, '5', 'Arrival at another target keeps the chosen one')

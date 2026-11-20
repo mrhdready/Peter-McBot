@@ -1,4 +1,3 @@
-<!-- Code generated/edited by Claude Opus 5.5 -->
 # 2026-11-20: Neugestaltung der Weboberfläche
 
 **Anlass:** Die einspaltige Seite war unübersichtlich. Nach einer Zielwahl auf der Karte musste man weit scrollen, um die Navigation zu starten.

@@ -10,6 +10,7 @@ Minecraft-Bedrock-Bot mit Websteuerung für einen vorhandenen Server. TypeScript
 - Blocksuche mit Registry-Autovervollständigung, X/Y/Z-Koordinaten, anklickbaren Kartenmarkern und Zielübernahme aus der Trefferliste.
 - Persistente Draufsicht mit Botposition, leichtem historischem Nebel und Übersicht bis 448 × 448 Blöcke. X/Z-Zielauswahl per Klick oder Tastatur, Wegvorschau ohne Bewegung und laufende Restweg-Anzeige.
 - Langsame Navigation über Vollblöcke, Halbstufen und richtungsabhängige Treppen. Sprünge auf einen Block Höhe und Abstiege bis einen Block. Erst der Start-Button bewegt den Bot.
+- Eigener Skin per Upload (PNG 64×64 oder 64×32, Classic oder Slim), gespeichert in `data/skin.json`. Er wird beim Verbinden gesendet und gilt daher erst nach dem nächsten Verbinden; die Oberfläche bietet dafür „Jetzt neu verbinden“.
 - Fehlende Chunkspalten werden nachgeladen; neue Weltdaten, Chunkwechsel und Ankunft aktualisieren die Karte.
 
 Geprüft gegen Bedrock **1.26.65 / Protokoll 2225**, mit Datenversion **1.26.60** und den enthaltenen Paketpatches. Kein Server- oder Welt-Downgrade erforderlich. Das ist keine allgemeine Versions- oder Add-on-Garantie.

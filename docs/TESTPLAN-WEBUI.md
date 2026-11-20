@@ -1,4 +1,3 @@
-<!-- Code generated/edited by Claude Opus 5.5 -->
 # Testplan: Neugestaltete Weboberfläche
 
 Manuelle Prüfung der neuen Oberfläche (`src/ui/`). Die automatisierten Tests (`pnpm test`) decken IDs, Inline-Script, Verbindungs-Umschalter und Zielwahl aus der Trefferliste ab. Dieser Plan prüft Layout und Bedienung im echten Browser.
@@ -94,6 +93,18 @@ Kernfall der Neugestaltung: **kein Scrollen der Seite** zwischen Zielwahl und St
 |---|---|---|---|
 | 7.1 | „Hilfe“ aufklappen | Erklärungen zu Karte, Navigation, Blocksuche | |
 | 7.2 | `/?measure=1` öffnen | Panel „Kartenperformance messen“ am Ende der Seitenleiste; Messung läuft durch | |
+
+## 8. Skin
+
+| # | Schritt | Erwartung | Ergebnis |
+|---|---|---|---|
+| 8.1 | „Skin“ aufklappen, 64×64-PNG und „Slim“ wählen, „Hochladen“ | Vorschau der Textur; Status „Eigener Skin (Slim)“ | |
+| 8.2 | Wie 8.1 bei verbundenem Bot | Status „gespeichert – beim nächsten Verbinden aktiv“, Button „Jetzt neu verbinden“ sichtbar | |
+| 8.3 | „Jetzt neu verbinden“ | Bot trennt und verbindet; danach Status „aktiv“, Button verschwindet | |
+| 8.4 | Mit eigenem Minecraft-Client ansehen | Bot trägt den hochgeladenen Skin mit passenden Armen (abhängig von „Nur vertrauenswürdige Skins“) | |
+| 8.5 | 64×32-PNG hochladen | Vorschau zeigt 64×64 mit gespiegeltem linken Arm und Bein | |
+| 8.6 | 128×128-PNG oder andere Datei hochladen | Fehlermeldung, gespeicherter Skin bleibt unverändert | |
+| 8.7 | „Standard wiederherstellen“ | Vorschau verschwindet; nach dem nächsten Verbinden Standard-Skin | |
 
 ## Rückmeldung
 

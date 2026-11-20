@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- Code generated/edited by Claude Opus 5.5: redesigned layout (map-centred, sidebar, mobile navigation bar). -->
+<!-- Redesigned layout (map-centred, sidebar, mobile navigation bar). -->
 <html lang="de"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MC Bot</title>
 <!-- ui:style -->
@@ -15,7 +15,7 @@
 <div class="map-stage">
 <div id="map-frame" hidden><canvas id="map-ground" aria-hidden="true"></canvas>
 <canvas id="map" width="144" height="144" tabindex="0" aria-label="Draufsicht der Umgebung, Nord oben. Klick oder Enter wählt das Ziel." aria-describedby="map-info" hidden>Die Umgebungskarte benötigt Canvas. Blockkoordinaten sind auch über die Blocksuche verfügbar.</canvas>
-<!-- Code generated/edited by Claude Opus 5.5: pins and their overlay lie above the canvas. -->
+<!-- Pins and their overlay lie above the canvas. -->
 <div id="map-pins" aria-label="Markierungen"></div><div id="map-pin-overlay" class="pin-overlay above" role="tooltip" hidden></div>
 <div id="map-controls" class="overlay controls" hidden><button id="map-home" type="button">Zum Bot</button><button id="map-zoom-in" type="button" aria-label="Karte vergrößern">+</button><button id="map-zoom-out" type="button" aria-label="Karte verkleinern">−</button><label for="map-dimension" class="visually-hidden">Dimension</label><select id="map-dimension"><option value="0">Oberwelt</option><option value="1">Nether</option><option value="2">Ende</option></select></div>
 <ul class="overlay legend" aria-label="Legende">
@@ -44,7 +44,7 @@
 <p id="nav-feedback" role="status"></p>
 <p id="nav-status" role="status">Navigation inaktiv.</p>
 </section>
-<!-- Code generated/edited by Claude Opus 5.5: saved places and navigation history. -->
+<!-- Saved places and navigation history. -->
 <section class="panel" id="places-panel" aria-labelledby="places-heading" hidden>
 <h2 id="places-heading">Orte</h2>
 <div class="poi-fields"><label for="poi-name">Name</label><label for="poi-icon">Symbol</label>
@@ -62,6 +62,15 @@
 <h2 id="bot-heading">Bot</h2>
 <dl class="facts"><dt>Position</dt><dd id="position">Unbekannt</dd><dt>Dimension</dt><dd id="dimension">Unbekannt</dd><dt>Chunks</dt><dd id="chunks">0</dd><dt>Herzschlag</dt><dd id="tick">0</dd><dt>Letzter Fehler</dt><dd id="error">—</dd></dl>
 </section>
+<details class="panel skin" id="skin-panel" hidden>
+<summary>Skin</summary>
+<img id="skin-preview" class="skin-preview" alt="Gespeicherte Skin-Textur" width="128" height="128" hidden>
+<p id="skin-status" role="status">Standard-Skin.</p>
+<div class="skin-fields"><label for="skin-file">PNG-Datei (64×64 oder 64×32)</label><input id="skin-file" type="file" accept="image/png">
+<label for="skin-model">Modell</label><select id="skin-model"><option value="classic" selected>Classic (breite Arme)</option><option value="slim">Slim (schmale Arme)</option></select></div>
+<div class="actions"><button id="skin-upload" type="button">Hochladen</button><button id="skin-reset" type="button">Standard wiederherstellen</button><button id="skin-reconnect" class="primary" type="button" hidden>Jetzt neu verbinden</button></div>
+<p id="skin-feedback" role="status"></p>
+</details>
 <section class="panel" aria-labelledby="search-heading">
 <h2 id="search-heading">Blocksuche</h2>
 <p id="coverage" aria-live="polite">Weltdaten noch unbekannt.</p>
@@ -85,6 +94,8 @@
 <p>„Ziel speichern“ oder „Bot-Position speichern“ legt einen Ort mit Name und Symbol an; er gilt für Server, Kartenschlüssel und Dimension. Orte erscheinen als 📍 auf der Karte. Zeigen auf eine Markierung blendet Details ein; Klick auf einen Ort übernimmt ihn als Ziel. Auf Touch-Geräten zeigt das erste Tippen die Details, erneutes Tippen übernimmt das Ziel. „Löschen“ muss ein zweites Mal bestätigt werden.</p>
 <p>„Zuletzt angesteuert“ listet die letzten zehn angenommenen Navigationsziele der Dimension. Ein Ziel bewegt den Bot erst nach „Navigation starten“.</p>
 <p>Stopp beendet den Vortrieb; eine laufende Sprung- oder Fallbewegung endet bei der Landung.</p>
+<h3>Skin</h3>
+<p>Ein eigener Skin (PNG, 64×64 oder 64×32) wird beim Verbinden einmal an den Server geschickt. Nach dem Hochladen gilt er erst ab der nächsten Verbindung; „Jetzt neu verbinden“ trennt und verbindet sofort. Ob andere Spieler ihn sehen, hängt auch von der Welteinstellung „Nur vertrauenswürdige Skins“ ab.</p>
 <h3>Blocksuche</h3>
 <p>Treffer werden türkis markiert, auch unter der Oberfläche. „Ziel“ in der Trefferliste übernimmt X/Z als Navigationsziel. Bei Weltänderungen erneut suchen.</p>
 </details>

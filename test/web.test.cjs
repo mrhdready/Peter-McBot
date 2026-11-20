@@ -14,7 +14,7 @@ test('HTTP queues commands, validates requests, and streams state using SSE', as
   const base = `http://127.0.0.1:${web.server.address().port}`
   const page = await fetch(base).then(r => r.text())
   new (require('node:vm').Script)(page.match(/<script>([\s\S]*?)<\/script>/)[1])
-  // Code generated/edited by Claude Opus 5.5: the page is assembled from dist/ui with inline style and exactly one inline script.
+  // The page is assembled from dist/ui with inline style and exactly one inline script.
   assert.equal(page.match(/<script>/g).length, 1)
   assert.match(page, /<style>[\s\S]*--sidebar[\s\S]*<\/style>/)
   assert.doesNotMatch(page, /<!-- ui:/)
@@ -28,7 +28,6 @@ test('HTTP queues commands, validates requests, and streams state using SSE', as
   const measurementPage = await fetch(base + '/?measure=1').then(r => r.text())
   for (const script of measurementPage.matchAll(/<script>([\s\S]*?)<\/script>/g)) new (require('node:vm').Script)(script[1])
   assert.match(measurementPage, /id="measure-map"/)
-  // Code generated/edited by Claude Opus 5.5
   assert.match(measurementPage, /byId\('sidebar'\)\.append\(panel\)/, 'Measurement panel joins the sidebar, not the map overlay')
   const archived = createWebServer(bot, {})
   t.after(() => archived.close())
@@ -124,14 +123,14 @@ test('map markers select underground hits, survive map refresh and discard obsol
     if(key==='strokeRect')return (...args)=>rectangles.push({args,color:context.strokeStyle})
     if(key==='beginPath')return ()=>{points=[]}
     if(key==='moveTo'||key==='lineTo')return (...args)=>points.push(args)
-    // Code generated/edited by Claude Opus 5.5: a rounded corner records its waypoint (the curve's control point).
+    // A rounded corner records its waypoint (the curve's control point).
     if(key==='quadraticCurveTo')return (cx,cz)=>points.push([cx,cz])
-    // Code generated/edited by Claude Opus 5.5: records the line width and dash pattern of the route.
+    // Records the line width and dash pattern of the route.
     if(key==='stroke')return ()=>strokes.push({color:context.strokeStyle,width:context.lineWidth,dash:target.dash||[],points:points.map(p=>[...p])})
     if(key==='setLineDash')return dash=>{target.dash=dash}
     return target[key]||(()=>{})
   } })
-  // Code generated/edited by Claude Opus 5.5: elements expose `style` for the DOM pins.
+  // Elements expose `style` for the DOM pins.
   const element = () => ({
     children: [], textContent: '', value: '', hidden: false, disabled: false, style: {},
     replaceChildren (...children) { this.children = children },
@@ -176,7 +175,7 @@ test('map markers select underground hits, survive map refresh and discard obsol
   const submit = () => byId('search').onsubmit({ preventDefault () {} })
   await publish()
   assert.deepEqual(strokes.filter(s=>s.color==='#111111').at(-1).points,[[16,16],[16.5,16.5],[14.5,16.5],[14.5,19.5]],'Route projects actual world positions into the map')
-  // Code generated/edited by Claude Opus 5.5: 2 screen pixels at 1 pixel per block; active navigation is solid.
+  // 2 screen pixels at 1 pixel per block; active navigation is solid.
   assert.equal(strokes.filter(s=>s.color==='#111111').at(-1).width,2)
   // The dash array comes from the vm realm, so compare its length instead of its prototype.
   assert.equal(strokes.filter(s=>s.color==='#111111').at(-1).dash.length,0)
@@ -196,7 +195,7 @@ test('map markers select underground hits, survive map refresh and discard obsol
   strokes.length=0;events.onerror()
   assert.ok(!strokes.some(s=>s.color==='#111111'),'Connection loss hides a potentially stale route')
   await publish()
-  // Code generated/edited by Claude Opus 5.5: one toggle sends the command that matches the connection state.
+  // One toggle sends the command that matches the connection state.
   assert.equal(byId('connection-toggle').textContent, 'Trennen')
   assert.equal(byId('status').textContent, 'Verbunden')
   await byId('connection-toggle').onclick()
@@ -219,7 +218,7 @@ test('map markers select underground hits, survive map refresh and discard obsol
   await submit()
   assert.match(byId('map-hit-info').textContent, /3 Treffer/)
   assert.equal(byId('hits').children.length, 3)
-  // Code generated/edited by Claude Opus 5.5: the hit list sets the target without starting movement.
+  // The hit list sets the target without starting movement.
   const navigateRequests = requests.filter(r => r.url === '/api/navigate').length
   byId('hits').children[2].children[4].children[0].onclick()
   assert.equal(byId('target-x').value, '4')
@@ -235,7 +234,6 @@ test('map markers select underground hits, survive map refresh and discard obsol
   assert.equal(byId('target-z').value, '-1')
   assert.equal(navigationCount(), beforeClick, 'Selecting a target must not start movement')
   assert.match(byId('nav-feedback').textContent, /Ziel gewählt.*X: -1, Z: -1/)
-  // Code generated/edited by Claude Opus 5.5
   const targetPin = byId('map-pins').children.find(pin => pin.textContent === '📌')
   assert.ok(targetPin, 'Chosen target has a pin')
   assert.equal(targetPin.style.left, (15.5 / 32 * 100) + '%')

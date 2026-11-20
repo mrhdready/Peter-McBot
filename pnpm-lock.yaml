@@ -15,6 +15,9 @@ importers:
       bedrock-protocol:
         specifier: 3.61.0
         version: 3.61.0(patch_hash=146de4be806932228e227998f841f6ac6c46812ba531705359a483337623bddc)
+      pngjs:
+        specifier: 7.0.0
+        version: 7.0.0
       prismarine-chunk:
         specifier: 1.41.0
         version: 1.41.0(patch_hash=9d818314b7bc9b30b39638e90e7a70e532a471548e77448bbdf0b8b65a8dd7b8)
@@ -25,6 +28,9 @@ importers:
       '@types/node':
         specifier: 24.10.1
         version: 24.10.1
+      '@types/pngjs':
+        specifier: 6.0.5
+        version: 6.0.5
       typescript:
         specifier: 5.9.3
         version: 5.9.3
@@ -120,6 +126,9 @@ packages:
 
   '@types/node@24.10.1':
     resolution: {integrity: sha512-GNWcUTRBgIRJD5zj+Tq0fKOJ5XZajIiBroOF0yvj2bSU1WvNdYS/dn9UxwsujGW4JX06dnHyjV2y9rRaybH0iQ==}
+
+  '@types/pngjs@6.0.5':
+    resolution: {integrity: sha512-0k5eKfrA83JOZPppLtS2C7OUtyNAl2wKNxfyYl9Q5g9lPkgBl/9hNyAu6HuEH2J4XmIv2znEpkDd0SaZVxW6iQ==}
 
   '@xboxreplay/xboxlive-auth@5.1.0':
     resolution: {integrity: sha512-UngHHsehZbiTjyyNmo8HvdoUDKMID1U9uVfrpFWUK/2UxPuVTKy5n+CzZQ3S488sW5vOhgh0lHqqynT8ouwgvw==}
@@ -788,6 +797,10 @@ packages:
     resolution: {integrity: sha512-AVbw3UJ2e9bq64vSaS9Am0fje1Pa8pbGqTTsmXfaIiMpnr5DlDhfJOuLj9Sf95ZPVDAUerDfEk88MPmPe7UCQg==}
     engines: {node: '>=0.10.0'}
 
+  pngjs@7.0.0:
+    resolution: {integrity: sha512-LKWqWJRhstyYo9pGvgor/ivk2w94eSjE3RGVuzLGlr3NmD8bf7RcYGze1mNdEHRP6TRP6rMuDHk5t44hnTRyow==}
+    engines: {node: '>=14.19.0'}
+
   possible-typed-array-names@1.1.0:
     resolution: {integrity: sha512-/+5VFTchJDoVj3bhoqi6UeymcD00DAwb1nJwamzPvHEszJ4FpF6SNNbUbOS8yI56qHzdV8eK0qEfOSiodkTdxg==}
     engines: {node: '>= 0.4'}
@@ -1307,6 +1320,10 @@ snapshots:
   '@types/node@24.10.1':
     dependencies:
       undici-types: 7.16.0
+
+  '@types/pngjs@6.0.5':
+    dependencies:
+      '@types/node': 24.10.1
 
   '@xboxreplay/xboxlive-auth@5.1.0': {}
 
@@ -2096,6 +2113,8 @@ snapshots:
       safe-push-apply: 1.0.0
 
   path-is-absolute@1.0.1: {}
+
+  pngjs@7.0.0: {}
 
   possible-typed-array-names@1.1.0: {}
 

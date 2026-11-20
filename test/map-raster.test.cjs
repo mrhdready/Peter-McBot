@@ -4,7 +4,7 @@ const vm=require('node:vm')
 const fs=require('node:fs')
 
 test('batched terrain pixels retain colors, missing data, uncertainty and historical shading',()=>{
-  // Code generated/edited by Claude Opus 5.5: the page script moved from web.ts to src/ui/app.js (copied to dist/ui).
+  // The page script moved from web.ts to src/ui/app.js (copied to dist/ui).
   const source=fs.readFileSync(require.resolve('../dist/ui/app.js'),'utf8')
   const code=source.slice(source.indexOf('function blockColor ('),source.indexOf('function paintTerrain ()'))
   let pixels,swatches=0,reads=0,writes=0

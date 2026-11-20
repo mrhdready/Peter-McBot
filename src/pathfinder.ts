@@ -2,7 +2,6 @@ import type { WorldState, Position } from './state.js'
 import { STEP_HEIGHT, type Feet } from './terrain.js'
 
 export const EYE_HEIGHT = 1.62
-// Code generated/edited by Claude Opus 5.5
 // Route costs favour safe handling over shortest distance: a one-block hole (drop + jump) costs about 9, walking around it 3-5.
 export const COST_FLAT = 1
 export const COST_STEP = 1.5
@@ -71,7 +70,6 @@ export class RoutePlanner {
       const id = key(node)
       if (this.closed.has(id)) continue
       this.closed.add(id)
-      // Code generated/edited by Claude Opus 5.5
       if (this.closed.size > MAX_SEARCH_NODES) throw new Error(`Suchlimit erreicht (${MAX_SEARCH_NODES} Wegpunkte).`)
       if (node.x === target.x && node.z === target.z) {
         let cursor: Feet = node
@@ -85,7 +83,6 @@ export class RoutePlanner {
       for (const [dx, dz] of NEIGHBOURS) {
         const x = node.x + dx; const z = node.z + dz
         const from = { x: node.x + .5, y: node.y, z: node.z + .5 }
-        // Code generated/edited by Claude Opus 5.5
         const walked = this.world.terrain.transition(from, x + .5, z + .5)
         const endpoint = walked ?? this.world.terrain.jumpTransition(from, x + .5, z + .5)
         if (!endpoint) continue
@@ -99,7 +96,6 @@ export class RoutePlanner {
     return null
   }
 
-  // Code generated/edited by Claude Opus 5.5
   // Every step costs at least 1, so the Manhattan heuristic stays admissible.
   private stepCost (fromY: number, next: Feet, jumped: boolean) {
     const rise = next.y - fromY

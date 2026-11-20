@@ -1,7 +1,7 @@
-/* Code generated/edited by Claude Opus 5.5: extracted from web.ts, adapted to the redesigned layout. */
+/* Extracted from web.ts, adapted to the redesigned layout. */
 const byId = id => document.getElementById(id);
 const archiveEnabled = false;
-// Code generated/edited by Claude Opus 5.5: saved places, navigation history and map pins.
+// Saved places, navigation history and map pins.
 const placesEnabled = false;
 const poiIcons = {home:'🏠', mine:'⛏️', portal:'🌀', farm:'🌾', storage:'📦', star:'⭐'};
 let places = {dimension:null, pois:[], history:[]};
@@ -51,6 +51,11 @@ let dragged = false;
 const tileCache = new Map();
 byId('map-controls').hidden = !archiveEnabled;
 byId('places-panel').hidden = !placesEnabled;
+const skinEnabled = false;
+let skinState = null;
+let skinPreviewHash = null;
+let botStatus = 'disconnected';
+byId('skin-panel').hidden = !skinEnabled;
 function dimensionNumber (value) {
   return ({overworld:0, nether:1, end:2})[value] ?? (Number.isInteger(value) ? value : null);
 }
@@ -64,7 +69,7 @@ function setMapSize (width, height) {
 function invalidateView () {
   if (mapRequest) mapRequest.abort();
   mapRequest = null; mapDirty = true; currentMap = null; mapCursor = null; renderedTerrainKey = null;
-  // Code generated/edited by Claude Opus 5.5: pins belong to the old viewport.
+  // Pins belong to the old viewport.
   clearPins();
   context.clearRect(0, 0, canvas.width, canvas.height);
   groundContext.clearRect(0, 0, ground.width, ground.height);
@@ -93,7 +98,6 @@ byId('map-zoom-out').onclick = () => zoomMap(2);
 byId('map-dimension').onchange = () => {
   followBot = false; mapDimension = Number(byId('map-dimension').value);
   invalidateView();
-  // Code generated/edited by Claude Opus 5.5
   void loadPlaces();
 };
 for (const id of ['target-x', 'target-z']) byId(id).oninput = () => {
@@ -176,7 +180,7 @@ function selectHit (hit) {
   byId('map-hit-info').textContent = searchResult.blockId + ' – X: ' + hit.x + ', Y: ' + hit.y + ', Z: ' + hit.z + '. Treffer der letzten Suche; bei Weltänderungen erneut suchen.';
   drawMap();
 }
-// Code generated/edited by Claude Opus 5.5: hits come from the live dimension, so they are valid targets even while another archive dimension is shown.
+// Hits come from the live dimension, so they are valid targets even while another archive dimension is shown.
 function selectHitTarget (hit) {
   byId('target-x').value = String(hit.x); byId('target-z').value = String(hit.z);
   byId('nav-feedback').textContent = 'Ziel gewählt – X: ' + hit.x + ', Z: ' + hit.z + '. Mit „Navigation starten“ anlaufen; Erreichbarkeit wird dann geprüft.';
@@ -339,7 +343,7 @@ function drawMap () {
   const route = !archiveEnabled || mapDimension === dimensionNumber(lastDimension) ? mapNavigation || preview : null;
   if (route && route.session === map.coverage.session && route.path.length && botPosition) {
     const origin = route.origin || botPosition;
-    // Code generated/edited by Claude Opus 5.5: thin dark line of constant screen width; dashed preview, solid active navigation.
+    // Thin dark line of constant screen width; dashed preview, solid active navigation.
     // Corners are rounded for display only: each waypoint is a curve control point, the curve passes through segment midpoints.
     const points = route.path.map(point => [point.x - map.x, point.z - map.z]);
     context.beginPath(); context.moveTo(origin.x - map.x, origin.z - map.z);
@@ -371,10 +375,10 @@ function drawMap () {
     context.strokeStyle = '#fff'; context.lineWidth = .4;
     context.strokeRect(mapCursor.x, mapCursor.z, 1, 1);
   }
-  // Code generated/edited by Claude Opus 5.5: bot, target and places are DOM pins above the canvas.
+  // Bot, target and places are DOM pins above the canvas.
   updatePins(map);
 }
-/* Code generated/edited by Claude Opus 5.5: map pins, pin overlay, saved places and navigation history. */
+/* Map pins, pin overlay, saved places and navigation history. */
 function pinSpecs (map) {
   const specs = [];
   const live = !archiveEnabled || mapDimension === dimensionNumber(lastDimension);
@@ -582,7 +586,7 @@ function describeMapCell (x, z) {
   drawMap();
 }
 canvas.onpointerdown = event => {
-  // Code generated/edited by Claude Opus 5.5: touch shows a pin's overlay first, mouse uses hover.
+  // Touch shows a pin's overlay first, mouse uses hover.
   lastPointerType = event.pointerType || 'mouse';
   if (!archiveEnabled || !view || (event.button !== undefined && event.button !== 0)) return;
   drag = { x: event.clientX, z: event.clientY, view: { ...view } }; dragged = false;
@@ -603,7 +607,7 @@ function applyPointer () {
       // Reuse the current raster while dragging; request the final viewport on release.
       context.clearRect(0, 0, canvas.width, canvas.height);
       ground.style.transform = 'translate(' + (drag.view.x - view.x) / view.size * bounds.width + 'px,' + (drag.view.z - view.z) / view.size * bounds.height + 'px)';
-      // Code generated/edited by Claude Opus 5.5: pins move with the terrain while dragging.
+      // Pins move with the terrain while dragging.
       byId('map-pins').style.transform = ground.style.transform; hideOverlay();
       return;
     }
@@ -611,7 +615,7 @@ function applyPointer () {
   const x = Math.floor((event.clientX - bounds.left) / bounds.width * currentMap.width);
   const z = Math.floor((event.clientY - bounds.top) / bounds.height * currentMap.height);
   if (mapCursor?.x !== x || mapCursor?.z !== z) describeMapCell(x, z);
-  // Code generated/edited by Claude Opus 5.5: hovering a pin shows its overlay.
+  // Hovering a pin shows its overlay.
   if (event.pointerType !== 'touch') {
     const pin = pinAt(event.clientX, event.clientY);
     if (pin) { if (overlayPin !== pin.key) showOverlay(pin.key); }
@@ -620,15 +624,13 @@ function applyPointer () {
   }
 }
 canvas.onpointermove = event => {
-  // Code generated/edited by Claude Opus 5.5
   pointerEvent = { clientX: event.clientX, clientY: event.clientY, pointerType: event.pointerType };
   if (pointerFrame === null) pointerFrame = requestAnimationFrame(applyPointer);
 };
 canvas.onpointerup = event => {
   if (!drag) return;
-  // Code generated/edited by Claude Opus 5.5: keep the pointer type so lifting a finger is not taken as a hover.
+  // Keep the pointer type so lifting a finger is not taken as a hover.
   pointerEvent = { clientX: event.clientX, clientY: event.clientY, pointerType: event.pointerType }; applyPointer();
-  // Code generated/edited by Claude Opus 5.5
   drag = null; ground.style.transform = ''; byId('map-pins').style.transform = '';
   if (dragged) invalidateView();
 };
@@ -643,7 +645,7 @@ canvas.onwheel = event => {
 canvas.onclick = event => {
   if (dragged) { dragged = false; return; }
   if (!currentMap) return;
-  // Code generated/edited by Claude Opus 5.5: first tap on a pin shows its overlay, the next tap marks it;
+  // First tap on a pin shows its overlay, the next tap marks it;
   // a mouse click on a place selects it directly, while bot and target pins keep the plain cell click.
   const pin = pinAt(event.clientX, event.clientY);
   if (lastPointerType === 'touch') {
@@ -799,7 +801,7 @@ byId('search').onsubmit = async event => {
     for (const hit of result.hits) {
       const row = document.createElement('tr');
       for (const value of [hit.x,hit.y,hit.z,hit.distance.toFixed(2)]) { const cell = document.createElement('td'); cell.textContent = value; row.append(cell); }
-      // Code generated/edited by Claude Opus 5.5: a hit row can set the navigation target directly.
+      // A hit row can set the navigation target directly.
       const action = document.createElement('td'); const button = document.createElement('button');
       button.type = 'button'; button.textContent = 'Ziel'; button.ariaLabel = 'Ziel X: ' + hit.x + ', Z: ' + hit.z + ' übernehmen';
       button.onclick = () => selectHitTarget(hit);
@@ -809,7 +811,7 @@ byId('search').onsubmit = async event => {
   } catch (error) { if (searchRequest === controller) byId('result').textContent = error.message; }
   finally { if (searchRequest === controller) { searchRequest = null; byId('find').disabled = false; } }
 };
-// Code generated/edited by Claude Opus 5.5: one toggle replaces the separate connect/disconnect buttons.
+// One toggle replaces the separate connect/disconnect buttons.
 let connectionCommand = 'connect';
 const statusLabels = {disconnected:'Getrennt', connecting:'Verbindet …', spawned:'Verbunden', reconnecting:'Verbindet erneut …', dead:'Verbunden (tot)', error:'Fehler'};
 const statusTones = {disconnected:'', connecting:'busy', spawned:'ok', reconnecting:'busy', dead:'bad', error:'bad'};
@@ -827,10 +829,61 @@ byId('connection-toggle').onclick = async () => {
     byId('feedback').textContent = 'Befehl angenommen: ' + command;
   } catch (error) { byId('feedback').textContent = error.message; }
 };
+// The skin is sent at login only: a saved skin that differs from the connection's skin needs a reconnect.
+function skinConnected () { return ['connecting','spawned','reconnecting','dead'].includes(botStatus); }
+function renderSkin () {
+  if (!skinEnabled || !skinState) return;
+  const preview = byId('skin-preview');
+  preview.hidden = !skinState.saved;
+  if (skinState.saved && skinPreviewHash !== skinState.saved) { skinPreviewHash = skinState.saved; preview.src = '/api/skin?h=' + skinState.saved; }
+  const pending = skinConnected() && skinState.saved !== skinState.active;
+  const label = skinState.saved ? 'Eigener Skin (' + (skinState.model === 'slim' ? 'Slim' : 'Classic') + ')' : 'Standard-Skin';
+  byId('skin-status').textContent = skinState.error ? 'Skin-Datei fehlerhaft: ' + skinState.error + '. Der Bot verbindet mit dem Standard-Skin.'
+    : label + (pending ? ' gespeichert – beim nächsten Verbinden aktiv.' : skinConnected() ? ' aktiv.' : ' wird beim Verbinden verwendet.');
+  byId('skin-reconnect').hidden = !pending;
+  byId('skin-reset').disabled = !skinState.saved && !skinState.error;
+}
+async function skinRequest (url, body) {
+  const response = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body});
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || 'HTTP ' + response.status);
+  return result;
+}
+byId('skin-upload').onclick = async () => {
+  const file = byId('skin-file').files?.[0];
+  if (!file) { byId('skin-feedback').textContent = 'Zuerst eine PNG-Datei wählen.'; return; }
+  if (file.size > 49152) { byId('skin-feedback').textContent = 'Die Datei ist größer als 48 KB.'; return; }
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+    skinState = await skinRequest('/api/skin', JSON.stringify({png:btoa(binary), model:byId('skin-model').value}));
+    byId('skin-file').value = '';
+    byId('skin-feedback').textContent = 'Skin gespeichert.' + (skinConnected() ? ' Er gilt ab der nächsten Verbindung.' : '');
+  } catch (error) { byId('skin-feedback').textContent = 'Hochladen fehlgeschlagen: ' + error.message; }
+  renderSkin();
+};
+byId('skin-reset').onclick = async () => {
+  try {
+    skinState = await skinRequest('/api/skin/delete');
+    byId('skin-feedback').textContent = 'Standard-Skin wiederhergestellt.' + (skinConnected() ? ' Er gilt ab der nächsten Verbindung.' : '');
+  } catch (error) { byId('skin-feedback').textContent = 'Zurücksetzen fehlgeschlagen: ' + error.message; }
+  renderSkin();
+};
+byId('skin-reconnect').onclick = async () => {
+  try {
+    await skinRequest('/api/disconnect');
+    await skinRequest('/api/connect');
+    byId('skin-feedback').textContent = 'Verbindet mit dem neuen Skin neu …';
+  } catch (error) { byId('skin-feedback').textContent = 'Neu verbinden fehlgeschlagen: ' + error.message; }
+};
 const events = new EventSource('/api/events');
 events.onmessage = event => {
   const state = JSON.parse(event.data);
   showConnection(state.status);
+  botStatus = state.status;
+  if (state.skin) skinState = state.skin;
+  renderSkin();
   byId('position').textContent = state.position ? Object.entries(state.position).map(([k,v])=>k+': '+v.toFixed(2)).join(' / ') + (state.positionSource === 'predicted' ? ' (Client-Prognose)' : ' (Server)') : 'Unbekannt';
   const nextDimension = dimensionNumber(state.dimension);
   if (archiveEnabled && followBot && nextDimension !== null && mapDimension !== nextDimension) {
@@ -853,7 +906,7 @@ events.onmessage = event => {
   byId('error').textContent = state.lastError || '—';
   const coverage = state.coverage;
   const nextMapContext = JSON.stringify([coverage?.session,latestRevision,coverage?.knownSubchunks,state.position ? Math.floor(state.position.x/16) : null,state.position ? Math.floor(state.position.z/16) : null]);
-  // Code generated/edited by Claude Opus 5.5: the target pin disappears once the bot arrives at that target.
+  // The target pin disappears once the bot arrives at that target.
   if (navigation?.status === 'arrived' && previousNavigationStatus !== 'arrived' && navigation.target &&
       byId('target-x').value === String(navigation.target.x) && byId('target-z').value === String(navigation.target.z)) {
     byId('target-x').value = ''; byId('target-z').value = ''; previewWanted = false; cancelPreview();
@@ -875,7 +928,7 @@ events.onmessage = event => {
       if (mapRequest) mapRequest.abort(); mapRequest = null;
     }
   }
-  // Code generated/edited by Claude Opus 5.5: refetch places after server-side changes or a dimension switch; refresh distances after movement.
+  // Refetch places after server-side changes or a dimension switch; refresh distances after movement.
   if (placesEnabled) {
     if (state.placesRevision !== placesRevision || placesDimension !== mapDimension) { placesRevision = state.placesRevision; void loadPlaces(); }
     else if (botPosition && (!placesRenderedAt || Math.hypot(botPosition.x - placesRenderedAt.x, botPosition.z - placesRenderedAt.z) >= 4)) renderPlaces();

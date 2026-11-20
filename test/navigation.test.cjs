@@ -65,7 +65,6 @@ test('central route snapshots shrink with movement and clear on replan, stop and
   assert.notEqual(world.navigation.path[0].x,999,'Snapshot cannot mutate the route used by the bot')
   for(let i=0;i<40;i++)step()
   assert.ok(world.navigation.path.length<snapshot.navigation.path.length)
-  // Code generated/edited by Claude Opus 5.5
   navigator.serverCorrection({...world.position,z:world.position.z+.8},100n,{x:0,y:-.0784,z:0},true)
   assert.equal(world.navigation.status,'planning')
   assert.deepEqual(world.snapshot().navigation.path,[])
@@ -248,7 +247,7 @@ test('all four registry stair directions use their low face and upside-down stai
   }
 })
 
-/* Code generated/edited by Claude Opus 5.5 — safety-weighted routes, correction tolerance and unknown-waypoint waiting. */
+/* Safety-weighted routes, correction tolerance and unknown-waypoint waiting. */
 async function plan (world, target) {
   const { RoutePlanner } = require('../dist/pathfinder.js')
   const planner = new RoutePlanner(world, world.position, target)
