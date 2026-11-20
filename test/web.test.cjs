@@ -114,12 +114,10 @@ test('map markers select underground hits, survive map refresh and discard obsol
   await once(web.server, 'listening')
   const page = await fetch(`http://127.0.0.1:${web.server.address().port}`).then(r => r.text())
   const elements = new Map()
-  const arcs = []
   const rectangles = []
   const strokes = []; let points = []
   const context = new Proxy({}, { get (target,key) {
     if(key==='createImageData')return (width,height)=>({width,height,data:new Uint8ClampedArray(width*height*4)})
-    if(key==='arc')return (...args)=>arcs.push({args,color:context.fillStyle})
     if(key==='strokeRect')return (...args)=>rectangles.push({args,color:context.strokeStyle})
     if(key==='beginPath')return ()=>{points=[]}
     if(key==='moveTo'||key==='lineTo')return (...args)=>points.push(args)
@@ -261,7 +259,14 @@ test('map markers select underground hits, survive map refresh and discard obsol
   assert.equal(choices.length, 2, 'Both vertical hits at one X/Z remain selectable')
   choices[1].onclick()
   assert.match(byId('map-hit-info').textContent, /Y: -6/)
-  assert.ok(arcs.some(({ args }) => args[0] === 15.5 && args[1] === 15.5 && args[2] === 1.1), 'Marker uses world X/Z at the centre of the cell')
+  const hitPins = () => byId('map-pins').children.filter(pin => pin.textContent === '⛏️')
+  assert.equal(hitPins().length, 2, 'One hit pin per X/Z column')
+  const columnPin = hitPins().find(pin => pin.style.left === (15.5 / 32 * 100) + '%')
+  assert.equal(columnPin.style.top, (15.5 / 32 * 100) + '%', 'Hit pin uses world X/Z at the centre of the cell')
+  assert.equal(columnPin.className, 'pin pin-center pin-hit selected')
+  assert.equal(hitPins().filter(pin => pin.className.includes('selected')).length, 1)
+  canvas.onpointermove({ clientX: 15.5, clientY: 15.5 })
+  assert.match(byId('map-pin-overlay').textContent, /^⛏️ minecraft:diamond_ore \(2 Treffer\)\nX: -1, Z: -1\nY: -6, 5\n1 Blöcke vom Bot entfernt\n/)
   now += 6000
   await publish()
   assert.match(byId('map-hit-info').textContent, /Y: -6/, 'Map polling preserves the selection')
@@ -315,10 +320,25 @@ test('map markers select underground hits, survive map refresh and discard obsol
   await byId('navigate').onsubmit({ preventDefault () {} })
   assert.deepEqual(JSON.parse(requests.filter(r => r.url === '/api/navigate').at(-1).options.body), { x: -1, z: -1 })
   assert.equal(byId('preview-status').textContent,'','Starting navigation removes the obsolete preview caption')
+  assert.equal(byId('search-reset').disabled, false, 'A finished search can be reset')
+  byId('search-reset').onclick()
+  assert.equal(byId('hits').children.length, 0)
+  assert.equal(hitPins().length, 0, 'Reset removes the hit pins')
+  assert.equal(byId('result').textContent, '')
+  assert.equal(byId('search-reset').disabled, true)
+  assert.equal(byId('target-x').value, '-1', 'Reset keeps the navigation target')
+  assert.equal(byId('block').value, 'diamond_ore', 'Reset keeps the search input')
   result = { ...result, hits: [], outcome: 'unknown' }
   await submit()
   assert.equal(byId('map-hit-options').children.length, 0)
   assert.equal(byId('hits').children.length, 0)
+  pendingSearch = new Promise(() => {})
+  void submit()
+  assert.equal(byId('find').disabled, true)
+  assert.equal(byId('search-reset').disabled, false, 'A running search can be cancelled')
+  byId('search-reset').onclick()
+  assert.equal(byId('find').disabled, false)
+  assert.equal(byId('search-reset').disabled, true)
   let finish
   pendingSearch = new Promise(resolve => { finish = resolve })
   const obsolete = submit()

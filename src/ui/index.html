@@ -78,9 +78,9 @@
 <form id="search"><label for="block">Block-ID</label><input id="block" name="block" value="minecraft:diamond_ore" list="block-ids" aria-describedby="block-hint" autocomplete="off" required maxlength="110"><datalist id="block-ids"></datalist>
 <p id="block-hint" class="hint" role="status">Blockvorschläge verfügbar, sobald die Registry geladen ist.</p>
 <div class="actions"><label for="limit">Max. Treffer</label><input id="limit" type="number" value="50" min="1" max="100" required>
-<button id="find" type="submit">Suchen</button></div></form>
+<button id="find" type="submit">Suchen</button><button id="search-reset" type="button" disabled>Zurücksetzen</button></div></form>
 <p id="result" role="status"></p>
-<p id="map-hit-info" role="status">Türkis: Treffer der letzten Blocksuche, auch unter der Oberfläche. Marker anklicken oder mit Pfeiltasten und Enter auswählen.</p>
+<p id="map-hit-info" role="status">⛏️: Treffer der letzten Blocksuche, auch unter der Oberfläche. Marker anklicken oder mit Pfeiltasten und Enter auswählen.</p>
 <div id="map-hit-options" aria-label="Treffer an der ausgewählten Kartenposition"></div>
 <div class="hits"><table><thead><tr><th scope="col">X</th><th scope="col">Y</th><th scope="col">Z</th><th scope="col">Entf.</th><th scope="col"><span class="visually-hidden">Aktion</span></th></tr></thead><tbody id="hits"></tbody></table></div>
 </section>
@@ -98,7 +98,7 @@
 <h3>Skin</h3>
 <p>Ein eigener Skin (PNG, 64×64 oder 64×32) wird beim Verbinden einmal an den Server geschickt. Nach dem Hochladen gilt er erst ab der nächsten Verbindung; „Jetzt neu verbinden“ trennt und verbindet sofort. Ob andere Spieler ihn sehen, hängt auch von der Welteinstellung „Nur vertrauenswürdige Skins“ ab.</p>
 <h3>Blocksuche</h3>
-<p>Treffer werden türkis markiert, auch unter der Oberfläche. „Ziel“ in der Trefferliste übernimmt X/Z als Navigationsziel. Bei Weltänderungen erneut suchen.</p>
+<p>Treffer werden mit ⛏️ markiert, auch unter der Oberfläche. „Zurücksetzen“ entfernt sie wieder. „Ziel“ in der Trefferliste übernimmt X/Z als Navigationsziel. Bei Weltänderungen erneut suchen.</p>
 </details>
 </aside>
 </main>
