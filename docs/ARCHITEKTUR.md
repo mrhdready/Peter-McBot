@@ -6,7 +6,11 @@
 
 `pathfinder.ts` enthält den gemeinsamen portionsweisen A*-Planner für Vorschau und Navigation. `terrain.ts` prüft Kollisionsformen, Kopffreiheit und Landeflächen. `navigation.ts` setzt die Bewegung in Protokolleingaben um. Die Vorschau verändert weder Position noch aktive Navigation und sendet keine Bewegungspakete.
 
-Planung: maximal 8192 Suchknoten, je Aufruf höchstens 128 Knoten mit einem weichen Zeitbudget von vier Millisekunden. Vorschauen enden nach spätestens 15 Sekunden; Navigation hat ein Zeitlimit und begrenzte Neuplanung. Diese Grenzen sind keine harte Echtzeitgarantie.
+Planung: maximal 16384 Suchknoten, je Aufruf höchstens 128 Knoten mit einem weichen Zeitbudget von vier Millisekunden. Vorschauen enden nach spätestens 15 Sekunden; Navigation hat ein Zeitlimit und begrenzte Neuplanung. Diese Grenzen sind keine harte Echtzeitgarantie.
+
+Der Planer sucht den am sichersten zu bewältigenden, nicht den kürzesten Weg. Kosten je Schritt: flach 1, Halbstufe oder Treppe 1,5, Abstieg 4, Sprung 5; ein Feld neben einem Abgrund, einem Loch von mindestens etwa einem Block oder unbekannten Daten kostet zusätzlich 2. Ein einzelnes Loch wird dadurch umgangen; ein unvermeidbarer Sprung bleibt möglich. Die Konstanten stehen in `pathfinder.ts`.
+
+Während der Navigation werden kleine Serverkorrekturen (höchstens 0,5 Block neben dem aktuellen Wegabschnitt, höchstens 0,1 Block Höhenabweichung, auf festem Boden) ohne Neuplanung übernommen. Nach mehr als drei Neuplanungen ohne erreichten Wegpunkt bricht die Navigation ab; jeder erreichte Wegpunkt setzt diesen Zähler zurück. Sind die Weltdaten am nächsten Wegpunkt unbekannt, bleibt der Bot bis zu drei Sekunden stehen und plant erst danach neu. Neuplanungen, Korrekturen und Abbrüche erscheinen im Prozesslog mit dem Präfix `[nav]`.
 
 ## Weltmodell und Karte
 

@@ -6,6 +6,18 @@ import { RoutePlanner, EYE_HEIGHT, type Target } from './pathfinder.js'
 export type { Target } from './pathfinder.js'
 type Send = (name: string, params: unknown) => void
 const distance = (a: Target, b: Target) => Math.hypot(a.x - b.x, a.z - b.z)
+// Code generated/edited by Claude Opus 5.5
+const MAX_STALLED_REPLANS = 3
+const CORRECTION_PATH_TOLERANCE = .5
+const CORRECTION_HEIGHT_TOLERANCE = .1
+const UNKNOWN_WAYPOINT_WAIT_MS = 3000
+const log = (message: string) => console.log('[nav] ' + message)
+const fixed = (n: number) => n.toFixed(2)
+function segmentDistance (p: Target, a: Target, b: Target) {
+  const lx = b.x - a.x; const lz = b.z - a.z; const length = lx * lx + lz * lz
+  const t = length > 0 ? Math.max(0, Math.min(1, ((p.x - a.x) * lx + (p.z - a.z) * lz) / length)) : 0
+  return Math.hypot(p.x - (a.x + t * lx), p.z - (a.z + t * lz))
+}
 
 export class Navigator {
   private planner: RoutePlanner | null = null
@@ -28,6 +40,10 @@ export class Navigator {
   private progressAt = 0
   private bestDistance = Infinity
   private yaw = 0
+  // Code generated/edited by Claude Opus 5.5
+  private stalledReplans = 0
+  private previousWaypoint: Position | null = null
+  private waitingSince: number | null = null
 
   constructor (private world: WorldState) {}
 
@@ -55,6 +71,8 @@ export class Navigator {
     if (!this.world.chunks.has(Math.floor(target.x / 16) + ':' + Math.floor(target.z / 16))) return this.fail('Ziel liegt außerhalb der geladenen Chunks.')
     this.session = this.world.worldSession
     this.startedAt = now; this.progressAt = now
+    // Code generated/edited by Claude Opus 5.5
+    this.stalledReplans = 0; this.waitingSince = null
     this.plan()
   }
 
@@ -71,6 +89,8 @@ export class Navigator {
   }
 
   private fail (message: string) {
+    // Code generated/edited by Claude Opus 5.5
+    if (['planning', 'moving'].includes(this.world.navigation.status) || this.settling) log(`Abbruch: ${message}`)
     this.stop(message)
     this.world.navigation.status = 'error'; this.world.navigation.message = message
   }
@@ -84,7 +104,12 @@ export class Navigator {
   }
 
   private replan (message: string) {
-    if (++this.world.navigation.replans > 3) return this.fail('Navigation nach wiederholten Änderungen abgebrochen: ' + message)
+    // Code generated/edited by Claude Opus 5.5
+    // Only replans without waypoint progress count towards the limit; `replans` stays the total for the status view.
+    this.world.navigation.replans++
+    this.waitingSince = null
+    if (++this.stalledReplans > MAX_STALLED_REPLANS) return this.fail('Navigation nach wiederholten Änderungen ohne Fortschritt abgebrochen: ' + message)
+    log(`Neuplanung ${this.stalledReplans}/${MAX_STALLED_REPLANS} ohne Fortschritt (gesamt ${this.world.navigation.replans}), verbleibende Wegpunkte ${this.world.navigation.path.length}: ${message}`)
     this.world.navigation.message = message
     if (this.grounded) {
       this.velocity = { x: 0, z: 0 }; this.neutral = this.inputActive
@@ -113,7 +138,18 @@ export class Navigator {
       if ((this.velocityY > .0001 && !this.jumping) || this.velocityY > JUMP_SPEED + .0001 || feet > this.fallFrom + 1.26 || (!this.grounded && (feet < this.fallFrom - MAX_DROP - .0001 || landing === null))) {
         this.fail('Serverkorrektur verlässt den sicheren Bereich; Navigation gestoppt.')
         this.settling = false; this.neutral = false
-      } else if (['planning', 'moving'].includes(this.world.navigation.status)) this.replan('Serverkorrektur übernommen; Weg wird neu geplant.')
+      } else if (['planning', 'moving'].includes(this.world.navigation.status)) {
+        // Code generated/edited by Claude Opus 5.5
+        // Small corrections that keep the bot on its current path segment are accepted without replanning.
+        const waypoint = this.world.navigation.path[0]; const previous = this.previousWaypoint
+        const offPath = waypoint && previous ? segmentDistance(position, previous, waypoint) : Infinity
+        const height = waypoint && previous ? Math.min(Math.abs(feet - previous.y), Math.abs(feet - waypoint.y)) : Infinity
+        const keep = this.world.navigation.status === 'moving' && this.grounded &&
+          offPath <= CORRECTION_PATH_TOLERANCE && height <= CORRECTION_HEIGHT_TOLERANCE
+        log(`Serverkorrektur: Abstand zum Weg ${fixed(offPath)}, Höhenabweichung ${fixed(height)}, ${keep ? 'übernommen' : 'Neuplanung'}`)
+        if (keep) this.velocity = { x: 0, z: 0 }
+        else this.replan('Serverkorrektur übernommen; Weg wird neu geplant.')
+      }
     }
     return true
   }
@@ -163,17 +199,32 @@ export class Navigator {
         if (this.world.worldRevision !== this.revision && path.some(p => !this.world.canStandAt(p.x, p.z, p.y))) return this.replan('Weg während der Suche blockiert.')
         nav.path = path; nav.remaining = path.length; nav.status = 'moving'; this.planner = null
         this.bestDistance = Infinity; this.progressAt = now
+        // Code generated/edited by Claude Opus 5.5
+        this.previousWaypoint = { x: p.x, y: p.y - EYE_HEIGHT, z: p.z }
       } catch (error) { this.fail(error instanceof Error ? error.message : String(error)) }
       return
     }
     const waypoint = this.world.navigation.path[0]
     if (!waypoint) return
     if (!this.world.canStandAt(p.x, p.z, p.y - EYE_HEIGHT) && this.world.terrain.surfaceAt(p.x, p.z, p.y - EYE_HEIGHT + .0001, this.fallFrom - MAX_DROP) === null) return this.fail('Aktuelle Position ist nicht mehr sicher begehbar; Navigation gestoppt.')
+    // Code generated/edited by Claude Opus 5.5
+    // Unknown (e.g. reloading) waypoint data: stand still and wait briefly instead of replanning at once.
+    if (this.grounded && !this.world.terrain.isKnownAt(waypoint.x, waypoint.z, waypoint.y)) {
+      if (this.waitingSince === null) {
+        this.waitingSince = now; this.velocity = { x: 0, z: 0 }; this.neutral = this.inputActive
+        log(`Weltdaten am Wegpunkt (${fixed(waypoint.x)}, ${fixed(waypoint.y)}, ${fixed(waypoint.z)}) unbekannt; warte bis zu ${UNKNOWN_WAYPOINT_WAIT_MS / 1000} s.`)
+      }
+      if (now - this.waitingSince < UNKNOWN_WAYPOINT_WAIT_MS) return
+      return this.replan('Weltdaten am Weg nach Wartezeit weiterhin nicht verfügbar.')
+    }
+    if (this.waitingSince !== null) { this.waitingSince = null; this.progressAt = now; this.bestDistance = Infinity }
     if (!this.world.canStandAt(waypoint.x, waypoint.z, waypoint.y)) return this.replan('Weg blockiert oder Weltdaten nicht mehr verfügbar.')
     const d = distance(p, waypoint)
     if (d < .08 && this.grounded && Math.abs(p.y - EYE_HEIGHT - waypoint.y) < .08) {
       this.world.navigation.path.shift(); nav.remaining = this.world.navigation.path.length
       this.bestDistance = Infinity; this.progressAt = now
+      // Code generated/edited by Claude Opus 5.5
+      this.previousWaypoint = { ...waypoint }; this.stalledReplans = 0
       if (!this.world.navigation.path.length) {
         this.stop('Ziel laut Client-Prognose erreicht.'); nav.status = 'arrived'
       }

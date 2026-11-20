@@ -1,7 +1,16 @@
 import type { WorldState, Position } from './state.js'
-import type { Feet } from './terrain.js'
+import { STEP_HEIGHT, type Feet } from './terrain.js'
 
 export const EYE_HEIGHT = 1.62
+// Code generated/edited by Claude Opus 5.5
+// Route costs favour safe handling over shortest distance: a one-block hole (drop + jump) costs about 9, walking around it 3-5.
+export const COST_FLAT = 1
+export const COST_STEP = 1.5
+export const COST_DROP = 4
+export const COST_JUMP = 5
+export const COST_EDGE = 2
+export const MAX_SEARCH_NODES = 16384
+const NEIGHBOURS = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const
 export type Target = { x: number; z: number }
 export type PreviewRoute = { target: Target; origin: Position; path: Feet[]; session: number; revision: number }
 type Node = Feet & { g: number; f: number }
@@ -62,7 +71,8 @@ export class RoutePlanner {
       const id = key(node)
       if (this.closed.has(id)) continue
       this.closed.add(id)
-      if (this.closed.size > 8192) throw new Error('Suchlimit erreicht (8192 Wegpunkte).')
+      // Code generated/edited by Claude Opus 5.5
+      if (this.closed.size > MAX_SEARCH_NODES) throw new Error(`Suchlimit erreicht (${MAX_SEARCH_NODES} Wegpunkte).`)
       if (node.x === target.x && node.z === target.z) {
         let cursor: Feet = node
         const path: Feet[] = [{ x: cursor.x + .5, y: cursor.y, z: cursor.z + .5 }]
@@ -72,17 +82,29 @@ export class RoutePlanner {
         }
         return path.reverse()
       }
-      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      for (const [dx, dz] of NEIGHBOURS) {
         const x = node.x + dx; const z = node.z + dz
         const from = { x: node.x + .5, y: node.y, z: node.z + .5 }
-        const endpoint = this.world.terrain.transition(from, x + .5, z + .5) ?? this.world.terrain.jumpTransition(from, x + .5, z + .5)
+        // Code generated/edited by Claude Opus 5.5
+        const walked = this.world.terrain.transition(from, x + .5, z + .5)
+        const endpoint = walked ?? this.world.terrain.jumpTransition(from, x + .5, z + .5)
         if (!endpoint) continue
-        const next = { x, y: Math.round(endpoint.y * 2) / 2, z }; const nextId = key(next); const cost = node.g + 1
+        const next = { x, y: Math.round(endpoint.y * 2) / 2, z }; const nextId = key(next)
+        const cost = node.g + this.stepCost(node.y, next, walked === null)
         if (this.closed.has(nextId) || (this.costs.get(nextId) ?? Infinity) <= cost) continue
         this.costs.set(nextId, cost); this.parents.set(nextId, node)
         this.open.push({ ...next, g: cost, f: cost + Math.abs(next.x - target.x) + Math.abs(next.z - target.z) })
       }
     }
     return null
+  }
+
+  // Code generated/edited by Claude Opus 5.5
+  // Every step costs at least 1, so the Manhattan heuristic stays admissible.
+  private stepCost (fromY: number, next: Feet, jumped: boolean) {
+    const rise = next.y - fromY
+    let cost = jumped ? COST_JUMP : rise < -STEP_HEIGHT ? COST_DROP : Math.abs(rise) > 1e-4 ? COST_STEP : COST_FLAT
+    if (NEIGHBOURS.some(([dx, dz]) => this.world.terrain.dropHazard(next.x + dx, next.z + dz, next.y))) cost += COST_EDGE
+    return cost
   }
 }

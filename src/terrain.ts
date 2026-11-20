@@ -56,6 +56,27 @@ export class Terrain {
     return null
   }
 
+  // Code generated/edited by Claude Opus 5.5
+  // True when walking from feet height y into block column (bx, bz) could drop the player by about one block or more,
+  // or into unknown data. Walls and step-ups at body height are not drop hazards.
+  dropHazard (bx: number, bz: number, y: number) {
+    const foot = Math.floor(y + EPS)
+    const body = this.read(bx, foot, bz)
+    if (!body) return true
+    if (body.boxes.some(b => foot + b[4] > y + EPS)) return false
+    for (let by = foot; by >= Math.floor(y - STEP_HEIGHT); by--) {
+      const cell = this.read(bx, by, bz)
+      if (!cell) return true
+      if (cell.support && cell.boxes.some(b => by + b[4] >= y - STEP_HEIGHT - EPS && by + b[4] <= y + EPS)) return false
+    }
+    return true
+  }
+
+  isKnownAt (x: number, z: number, y: number) {
+    const box = playerBox({ x, y, z })
+    return this.collect([box[0], y - EPS, box[2], box[3], box[4], box[5]]) !== null
+  }
+
   private clip (obstacles: Obstacle[], p: Feet, amount: number, axis: number) {
     const a = playerBox(p)
     for (const { box: b } of obstacles) {

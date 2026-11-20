@@ -152,3 +152,19 @@ test('server correction during an authorized ascent settles and replans; unrelat
   navigator.serverCorrection({...world.position,y:world.position.y+.2},10000n,{x:0,y:.3,z:0},false)
   assert.equal(world.navigation.status,'error')
 })
+
+/* Code generated/edited by Claude Opus 5.5 */
+test('drop hazards cover holes, deep drops and unknown data but not walls or half steps', () => {
+  const { terrain, set } = fixture()
+  assert.equal(terrain.dropHazard(1,0,0),false,'Flat ground')
+  set(1,0,0,cube)
+  assert.equal(terrain.dropHazard(1,0,0),false,'A wall cannot be fallen into')
+  set(1,0,0,[]);set(1,-1,0,lower)
+  assert.equal(terrain.dropHazard(1,0,0),false,'Half-block step down')
+  set(1,-1,0,[])
+  assert.equal(terrain.dropHazard(1,0,0),true,'One-block hole')
+  set(1,0,0,null)
+  assert.equal(terrain.dropHazard(1,0,0),true,'Unknown data')
+  assert.equal(terrain.isKnownAt(1.5,.5,0),false)
+  assert.equal(terrain.isKnownAt(3.5,.5,0),true)
+})

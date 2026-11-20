@@ -65,7 +65,8 @@ test('central route snapshots shrink with movement and clear on replan, stop and
   assert.notEqual(world.navigation.path[0].x,999,'Snapshot cannot mutate the route used by the bot')
   for(let i=0;i<40;i++)step()
   assert.ok(world.navigation.path.length<snapshot.navigation.path.length)
-  navigator.serverCorrection(world.position,100n,{x:0,y:-.0784,z:0},true)
+  // Code generated/edited by Claude Opus 5.5
+  navigator.serverCorrection({...world.position,z:world.position.z+.8},100n,{x:0,y:-.0784,z:0},true)
   assert.equal(world.navigation.status,'planning')
   assert.deepEqual(world.snapshot().navigation.path,[])
   for(let i=0;i<30&&world.navigation.status==='planning';i++)step()
@@ -245,4 +246,79 @@ test('all four registry stair directions use their low face and upside-down stai
     assert.equal(world.terrain.transition(low,1.5,.5),null)
     assert.equal(world.canStandAt(1.5,.5,72),true)
   }
+})
+
+/* Code generated/edited by Claude Opus 5.5 — safety-weighted routes, correction tolerance and unknown-waypoint waiting. */
+async function plan (world, target) {
+  const { RoutePlanner } = require('../dist/pathfinder.js')
+  const planner = new RoutePlanner(world, world.position, target)
+  for (let i = 0; i < 400; i++) { const path = planner.step(); if (path) return path }
+  assert.fail('Planner did not finish')
+}
+
+test('routes walk around a single one-block hole instead of dropping in and jumping out', async t => {
+  const { world } = await setup(t)
+  world.updateBlock({ x: 2, y: 70, z: 0 }, hash('air'))
+  world.updateBlock({ x: 2, y: 69, z: 0 }, hash('stone'))
+  const path = await plan(world, { x: 4, z: 0 })
+  assert.deepEqual(path.at(-1), { x: 4.5, y: 71, z: .5 })
+  assert.ok(path.every(p => p.y === 71), 'No waypoint drops into the hole')
+  assert.ok(!path.some(p => p.x === 2.5 && p.z === .5))
+})
+
+test('routes keep a distance from drop-offs when a safe detour exists', async t => {
+  const { world } = await setup(t)
+  for (let x = 0; x <= 4; x++) world.updateBlock({ x, y: 70, z: -1 }, hash('air'))
+  const path = await plan(world, { x: 4, z: 0 })
+  assert.deepEqual(path.at(-1), { x: 4.5, y: 71, z: .5 })
+  assert.ok(path.slice(1, -1).every(p => p.z !== .5), 'Interior waypoints avoid the row next to the drop')
+})
+
+test('a jump is still planned when it is the only way to the target', async t => {
+  const { world, navigator, step } = await setup(t)
+  for (let x = 2; x <= 5; x++) for (let z = -5; z <= 5; z++) world.updateBlock({ x, y: 71, z }, hash('stone'))
+  const path = await plan(world, { x: 3, z: 0 })
+  assert.equal(path.at(-1).y, 72)
+  navigator.start({ x: 3, z: 0 }, 0)
+  for (let i = 0; i < 600 && ['planning', 'moving'].includes(world.navigation.status); i++) step()
+  assert.equal(world.navigation.status, 'arrived', world.navigation.message)
+})
+
+test('small on-path server corrections are accepted without replanning', async t => {
+  const { world, navigator, step } = await setup(t)
+  navigator.start({ x: 4, z: 0 }, 0)
+  for (let i = 0; i < 30 && world.navigation.status === 'planning'; i++) step()
+  for (let i = 0; i < 10; i++) step()
+  for (let tick = 1; tick <= 5; tick++) {
+    navigator.serverCorrection({ ...world.position, z: .7 }, BigInt(tick * 10), { x: 0, y: -.0784, z: 0 }, true)
+    assert.equal(world.navigation.status, 'moving', world.navigation.message)
+    for (let i = 0; i < 5; i++) step()
+  }
+  assert.equal(world.navigation.replans, 0)
+  for (let i = 0; i < 600 && ['planning', 'moving'].includes(world.navigation.status); i++) step()
+  assert.equal(world.navigation.status, 'arrived', world.navigation.message)
+})
+
+test('unknown waypoint data pauses movement for up to three seconds before replanning', async t => {
+  const { world, navigator, step, sent } = await setup(t)
+  navigator.start({ x: 4, z: 0 }, 0)
+  for (let i = 0; i < 30 && world.navigation.status === 'planning'; i++) step()
+  for (let i = 0; i < 10; i++) step()
+  const isKnownAt = world.terrain.isKnownAt
+  world.terrain.isKnownAt = () => false
+  t.after(() => { world.terrain.isKnownAt = isKnownAt })
+  step(); step()
+  const count = sent.length
+  for (let i = 0; i < 40; i++) step()
+  assert.equal(world.navigation.status, 'moving', world.navigation.message)
+  assert.equal(world.navigation.replans, 0)
+  assert.ok(sent.slice(count).every(p => p.params.move_vector.z === 0), 'No forward input while waiting')
+  world.terrain.isKnownAt = isKnownAt
+  for (let i = 0; i < 600 && ['planning', 'moving'].includes(world.navigation.status); i++) step()
+  assert.equal(world.navigation.status, 'arrived', world.navigation.message)
+  navigator.start({ x: -3, z: 0 }, 100000)
+  for (let i = 0; i < 30 && world.navigation.status === 'planning'; i++) step()
+  world.terrain.isKnownAt = () => false
+  for (let i = 0; i < 70; i++) step()
+  assert.equal(world.navigation.replans, 1, 'Replans once after the wait expires')
 })

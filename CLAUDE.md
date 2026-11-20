@@ -1,0 +1,63 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+`AGENTS.md` is the contributor guide (structure, style, test and security rules) and applies here too. This file adds the context that takes several files to piece together. The README and `docs/` are in German; `docs/ARCHITEKTUR.md` covers the HTTP API, and `docs/KARTE.md` covers the persistent map.
+
+## What this is
+
+A Minecraft **Bedrock** AFK bot with a local web control panel. It is a single Node.js 24 process, written in strict TypeScript, that connects to an existing server over HTTP-NetherNet (pure-JS WebRTC via `werift`) using an offline identity. It has been verified only against Bedrock 1.26.65 / protocol 2225, with data version `1.26.60`. Other protocol numbers are rejected.
+
+## Commands
+
+Use Node.js 24 (`engines: >=24 <25`) and pnpm 11.25.0.
+
+```sh
+pnpm install --frozen-lockfile    # applies patches/ via pnpm-workspace.yaml; install scripts are disabled
+pnpm build                        # tsc: src/ -> dist/
+pnpm test                         # tsc && node --test test/*.test.cjs
+pnpm build && node --test test/web.test.cjs                         # one test file
+pnpm build && node --test --test-name-pattern "SSE" test/web.test.cjs  # one test by name
+node --env-file=.env dist/main.js # run locally; `pnpm start` does NOT load .env
+pnpm check:compatibility          # offline; writes ignored compatibility-result.json
+```
+
+No linter or formatter is configured; `tsc` is the only static check.
+
+**Tests are CommonJS (`.cjs`) and `require('../dist/...')`**, so they run against compiled output. Always rebuild before running a single test file, or you will be testing stale code.
+
+`scripts/probe-server.cjs` and `scripts/smoke-*.cjs` connect to a **real server**, and the movement smoke tests move a real player. Run them only when the user explicitly asks, with `node --env-file=.env --env-file=config/smoke.env scripts/<name>.cjs`.
+
+## Architecture
+
+**Wiring (`main.ts`).** `main.ts` builds a `BotController` with an injected `ClientFactory` that wraps `bedrock-protocol`'s `createClient`, then creates a `MapArchive` and connects it via `bot.state.onSurfaceTile`. It also starts `createWebServer(bot, archive)` and flushes the archive every 5 s and on SIGINT/SIGTERM. The bot never connects automatically at startup; a `connect` command is required. Tests inject a fake `EventEmitter` client and a controllable `now()` instead of a real connection (see `test/bot.test.cjs`).
+
+**Single-threaded command loop (`bot.ts`).** HTTP handlers never touch the bot directly; they call `bot.enqueue(command)`. The queue holds at most 32 commands, and `stop_navigation` jumps the queue. A 50 ms `setInterval` (`step()`, the 20-Hz heartbeat) drains the queue and handles connection state: wanted/connecting, the login timeout and bounded retry. It also advances navigation and time-sliced preview jobs, and flushes surface changes. Any new long-running work should be a step-able job driven by this tick, not a separate timer.
+
+**World model (`state.ts`, `world.ts`, `chunk-worker.ts`).** `WorldState` owns position, dimension, status and the chunk cache: a circular radius of 4–6 chunks, set by `CHUNK_RADIUS`. Chunk decoding runs in a `worker_threads` Worker loaded from `dist/chunk-worker.js`. Missing columns and subchunks are requested explicitly, with limited retries spread out over time. **Unknown data is never treated as air.** Known and unknown must stay distinguishable everywhere: pathfinding, map rendering and block search.
+
+**Movement (`pathfinder.ts`, `terrain.ts`, `navigation.ts`).**
+- `pathfinder.ts` is the one shared incremental A* used by both preview and navigation. Its limits: 16384 nodes, ≤128 nodes per call, a ~4 ms soft budget per call, and a 15 s cap on previews. It optimises for safe handling, not distance: weighted step costs (`COST_*`: flat 1, slab/stair 1.5, drop 4, jump 5, +2 next to a drop/hole/unknown via `Terrain.dropHazard`). Every cost is ≥1, so the Manhattan heuristic stays admissible.
+- `navigation.ts` accepts small on-path server corrections without replanning, fails only after more than 3 replans *without waypoint progress*, and waits up to 3 s at an unknown waypoint before replanning. Decisions are logged with the `[nav]` prefix.
+- `terrain.ts` answers collision, headroom and landing questions. It handles full blocks, slabs and direction-dependent stairs; steps can go at most 1 block up or 1 block down.
+- `navigation.ts` turns a plan into protocol input packets.
+- **Preview isolation is a hard invariant:** `/api/preview` must not change position or active navigation, and must not send movement packets. Tests cover this.
+
+**Persistent map (`map-archive.ts`).** Observed *surfaces* (not full chunks) are stored as 16×16 tiles under `data/maps/`. They are keyed by normalized host/port/transport + `MAP_WORLD_ID` + dimension. Writes go to a temp file and are then atomically renamed. Historical tiles are for display only: navigation, preview and block search use **only** the live cache. Merge rules: an incomplete observation never replaces a confirmed surface, while fully known air may replace old blocks. The tile and manifest endpoints use SHA-256 fingerprints and ETags to return 304.
+
+**Web (`web.ts`).** One file holds `node:http` routes, SSE and the entire inline HTML/JS/canvas UI. There is no frontend build. POSTs require `Content-Type: application/json` and reject foreign `Origin` headers. This is not authentication: the UI is meant for a trusted network only. `createWebServer(bot)` without an archive falls back to the legacy unpersisted `/api/map`.
+
+**Map performance (`map-performance.ts`).** This module provides `/?measure=1` and `/api/map-performance`, which report Node and cgroup counters.
+
+## Dependency patches and trust
+
+`bedrock-protocol@3.61.0` and `prismarine-chunk@1.41.0` are pinned exactly and patched through `patches/`, listed in `pnpm-workspace.yaml`. The patches add NetherNet signalling, signed offline identity, the Bedrock 1.26 chunk loader and the runtime-ID hash fix. Changing those versions means regenerating the patches and keeping the lockfile consistent.
+
+The server operator key is pinned in `data/server-key.sha256`. Do not weaken signature, DTLS or key-pin checks, and never "fix" compatibility by downgrading the server or world.
+
+## Deployment
+
+- `.github/workflows/docker-build.yml` builds the Dockerfile on every push and PR. It publishes to GHCR only on a push to `main`.
+- `compose.yaml` pulls `BOT_IMAGE` from `.env`; it has no local build.
+- `pnpm prepare:arcane` reads `config/arcane.env` and generates the ignored `deploy/arcane/` from `deploy/arcane-template/`. Edit the template, not the output.
+- `test/deployment.test.cjs` checks the deployment configuration.
