@@ -4,6 +4,7 @@ import { Inventory } from './inventory.js'
 export type Position = { x: number; y: number; z: number }
 export type Status = 'disconnected' | 'connecting' | 'spawned' | 'reconnecting' | 'dead' | 'error'
 export type Player = { name: string; position: Position; uniqueId: string; uuid: string }
+export type ItemEntity = { uniqueId: string; name: string; count: number; position: Position }
 export type NavigationState = {
   status: 'idle' | 'planning' | 'moving' | 'stopped' | 'arrived' | 'error';
   target: { x: number; z: number } | null; feetY: number | null;
@@ -25,6 +26,8 @@ export class WorldState extends ChunkWorld {
   roster = new Map<string, string>()
   // The bot's own inventory; memory only.
   inventory = new Inventory()
+  // Dropped item entities the server reports near the bot, keyed by runtime entity ID; memory only.
+  items = new Map<string, ItemEntity>()
   resetWorld () {
     this.position = null
     this.lastServerPosition = null
@@ -32,6 +35,7 @@ export class WorldState extends ChunkWorld {
     this.dimension = null
     this.players.clear()
     this.roster.clear()
+    this.items.clear()
     this.inventory.reset()
     this.clearChunks()
   }

@@ -58,7 +58,7 @@ export class RoutePlanner {
     if (!world.chunks.has(Math.floor(target.x / 16) + ':' + Math.floor(target.z / 16))) throw new Error('Ziel liegt außerhalb der geladenen Chunks.')
     const centre = world.terrain.transition({x:position.x, y:position.y - EYE_HEIGHT, z:position.z}, Math.floor(position.x) + .5, Math.floor(position.z) + .5)
     if (!centre) throw new Error('Die Mitte des aktuellen Blocks ist ohne Sprung nicht erreichbar.')
-    const start = {x:Math.floor(position.x), y:Math.round(centre.y * 2) / 2, z:Math.floor(position.z)}
+    const start = {x:Math.floor(position.x), y:Math.round(centre.y * 16) / 16, z:Math.floor(position.z)}
     this.open.push({...start,g:0,f:Math.abs(start.x-target.x)+Math.abs(start.z-target.z)})
     this.costs.set(key(start),0)
   }
@@ -88,7 +88,7 @@ export class RoutePlanner {
         const walked = this.world.planningTerrain.transition(from, x + .5, z + .5)
         const endpoint = walked ?? this.world.planningTerrain.jumpTransition(from, x + .5, z + .5)
         if (!endpoint) continue
-        const next = { x, y: Math.round(endpoint.y * 2) / 2, z }; const nextId = key(next)
+        const next = { x, y: Math.round(endpoint.y * 16) / 16, z }; const nextId = key(next)
         const cost = node.g + this.stepCost(node.y, next, walked === null)
         if (this.closed.has(nextId) || (this.costs.get(nextId) ?? Infinity) <= cost) continue
         this.costs.set(nextId, cost); this.parents.set(nextId, node)

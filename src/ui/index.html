@@ -87,6 +87,14 @@
 <ul id="inventory-list" class="place-list" aria-label="Gegenstände im Inventar des Bots"></ul>
 <p id="inventory-empty" class="hint">Inventar unbekannt (nicht verbunden).</p>
 </details>
+<!-- Farming mode: harvests ripe crops around the anchor and replants them; chat "farming on|off" switches the same mode. -->
+<details class="panel farm" id="farm-panel" open>
+<summary><h2>Farm</h2></summary>
+<div class="skin-fields"><label for="farm-anchor">Anker</label><select id="farm-anchor"><option value="" selected>Aktuelle Bot-Position</option></select></div>
+<div class="actions"><button id="farm-toggle" class="primary" type="button">Farming starten</button></div>
+<p id="farm-status" role="status">Farming ist aus.</p>
+<p id="farm-feedback" role="status"></p>
+</details>
 <!-- Read-only chat log; from 1400px it becomes a fixed left column (CSS). The script opens it except below 900px. -->
 <details class="panel chat" id="chat-panel">
 <summary><h2 id="chat-heading">Chat</h2></summary>
@@ -118,6 +126,8 @@
 <h3>Chat</h3>
 <p>Chat-Befehle beginnen mit dem Namen des Bots, etwa „Peter inventory“ (kurz „inv“) oder „Peter give dirt 5“. „give“ läuft zum Absender und wirft ihm das Item zu; ohne Anzahl alles davon. „Inventar“ zeigt dieselben Daten.</p>
 <p>Zeigt die letzten 100 Chatzeilen anderer Spieler, Flüstern an den Bot (kursiv) und die Antworten des Bots auf Chat-Befehle. Graue Zeilen markieren Verbinden und Trennen. Der Verlauf liegt nur im Speicher und ist nach einem Neustart des Bots leer. Aus der Oberfläche kann nicht geschrieben werden.</p>
+<h3>Farm</h3>
+<p>„Farming starten“ erntet reifen Weizen, Karotten und Kartoffeln im Umkreis von bis zu 24 Blöcken um den Anker, sammelt die Drops ein und pflanzt dieselbe Frucht neu. Etwa alle 30 Sekunden sucht der Bot erneut. Was über dem Vorrat (64 Weizensamen, 16 Karotten, 16 Kartoffeln) liegt, kommt in die nächste Kiste im Bereich; Weizen und giftige Kartoffeln immer. Chat-Befehle wie „go“ oder „come“ pausieren das Farmen für eine Minute, eine Navigation aus der Oberfläche und „Stopp“ beenden es. Im Chat: „Peter farming on [Wegpunkt]“, „farming once“, „farming off“, „farming“ (Status).</p>
 <h3>Blocksuche</h3>
 <p>Treffer werden mit ⛏️ markiert, auch unter der Oberfläche. „Zurücksetzen“ entfernt sie wieder. „Ziel“ in der Trefferliste übernimmt X/Z als Navigationsziel. Bei Weltänderungen erneut suchen.</p>
 </details>

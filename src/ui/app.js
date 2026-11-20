@@ -557,7 +557,39 @@ function renderPlaces () {
     return item;
   }));
   byId('history-empty').hidden = places.history.length > 0;
+  renderFarmAnchors();
 }
+// The farm anchor is the bot's position or a saved place of the connected dimension.
+function renderFarmAnchors () {
+  const select = byId('farm-anchor'); const chosen = select.value;
+  const pois = placesEnabled && dimensionNumber(lastDimension) === places.dimension ? places.pois : [];
+  const option = (value, label) => { const entry = document.createElement('option'); entry.value = value; entry.textContent = label; return entry; };
+  select.replaceChildren(option('', 'Aktuelle Bot-Position'), ...pois.map(poi => option(poi.id, (poiIcons[poi.icon] || '📍') + ' ' + poi.name)));
+  select.value = pois.some(poi => poi.id === chosen) ? chosen : '';
+}
+let farmState = null;
+function renderFarm () {
+  const farm = farmState;
+  if (!farm) return;
+  byId('farm-toggle').textContent = farm.enabled ? 'Farming beenden' : 'Farming starten';
+  byId('farm-toggle').disabled = !farm.enabled && botStatus !== 'spawned';
+  byId('farm-anchor').disabled = farm.enabled;
+  const until = farm.pausedUntil ? ' bis ' + new Date(farm.pausedUntil).toLocaleTimeString('de-DE', {hour:'2-digit', minute:'2-digit', second:'2-digit'}) : '';
+  byId('farm-status').textContent = (farm.enabled ? farm.activity + until + ' – Anker: ' + farm.anchor.label + ', Radius ' + farm.radius + '.' : 'Farming ist aus.') +
+    (farm.lastSummary ? ' Zuletzt: ' + farm.lastSummary : '');
+}
+byId('farm-toggle').onclick = async () => {
+  const on = !farmState?.enabled;
+  try {
+    const body = on ? {action:'on', place:byId('farm-anchor').value || null} : {action:'off'};
+    const response = await fetch('/api/farm', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'HTTP ' + response.status);
+    if (result.farm) farmState = result.farm;
+    byId('farm-feedback').textContent = on ? 'Farming gestartet.' : 'Farming beendet.';
+  } catch (error) { byId('farm-feedback').textContent = (on ? 'Start' : 'Beenden') + ' fehlgeschlagen: ' + error.message; }
+  renderFarm();
+};
 // Players in range first by distance, then everyone else alphabetically.
 function renderPlayers (roster, spawned) {
   const distance = player => player.position && botPosition ? Math.hypot(player.position.x - botPosition.x, player.position.z - botPosition.z) : null;
@@ -998,6 +1030,7 @@ events.onmessage = event => {
   botStatus = state.status;
   if (state.skin) skinState = state.skin;
   renderSkin();
+  if (state.farm) { farmState = state.farm; renderFarm(); }
   byId('position').textContent = state.position ? Object.entries(state.position).map(([k,v])=>k+': '+v.toFixed(2)).join(' / ') + (state.positionSource === 'predicted' ? ' (Client-Prognose)' : ' (Server)') : 'Unbekannt';
   const nextDimension = dimensionNumber(state.dimension);
   if (archiveEnabled && followBot && nextDimension !== null && mapDimension !== nextDimension) {

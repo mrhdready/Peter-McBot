@@ -5,6 +5,7 @@ import { Navigator } from './navigation.js'
 import { RoutePlanner, type PreviewRoute, type Target } from './pathfinder.js'
 import { WorldError } from './world.js'
 import type { ContainerWindow, Inventory, TransferStep } from './inventory.js'
+import { Farmer } from './farming.js'
 
 export interface BotClient extends EventEmitter {
   queue(name: string, params: unknown): void
@@ -13,7 +14,7 @@ export interface BotClient extends EventEmitter {
   entityId?: unknown
 }
 /** Who asked for a navigation via chat; navigations from the web UI have none. */
-export type NavigationOrigin = { player: string; label: string; give?: number; chest?: number }
+export type NavigationOrigin = { player: string; label: string; give?: number; chest?: number; farm?: number }
 export type Command = 'connect' | 'disconnect' | 'stop_navigation' | { type: 'navigate'; x: number; z: number; origin?: NavigationOrigin }
 export type NavigationEnd = (origin: NavigationOrigin | null, status: string, message: string | null) => void
 export type ClientFactory = (config: Config) => BotClient
@@ -44,6 +45,8 @@ const chestLog = (message: string) => console.log('[chest] ' + message)
 
 export class BotController {
   readonly state: WorldState
+  /** The farming mode; it lives with the bot so the web UI can switch it without chat commands. */
+  readonly farm: Farmer
   private navigator: Navigator
   private commands: Command[] = []
   private client: BotClient | null = null
@@ -74,6 +77,22 @@ export class BotController {
   ) {
     this.state = new WorldState(config.radius, config.version); this.state.openDoors = config.openDoors !== false
     this.navigator = new Navigator(this.state)
+    // Getters, because tests replace state and navigator after construction.
+    const bot = this
+    this.farm = new Farmer({
+      get state () { return bot.state }, get navigator () { return bot.navigator }, reach: config.radius * 16,
+      now: () => this.now(),
+      enqueue: command => this.enqueue(command),
+      entityId: () => this.client?.entityId,
+      useChest: (chest, next) => this.useChest(chest, next),
+      cancelChest: () => this.cancelChest(),
+      stopNavigation: () => {
+        if (!this.runActive || this.runOrigin?.farm === undefined) return
+        this.navigator.stop()
+        this.settleNavigation()
+      },
+      publish: () => { this.publishAt = 0 }
+    })
   }
 
   enqueue (command: Command) {
@@ -102,13 +121,16 @@ export class BotController {
     for (const command of this.commands.splice(0)) {
       if (typeof command === 'object') {
         this.previewJob?.cancel()
+        // A target from the web UI ends farming; the farmer's own targets keep it running.
+        if (!command.origin) this.farm.off('UI-Navigation')
         this.cancelChest()
         // A new target replaces the running one; report that run as stopped first.
-        if (this.runActive) { this.runActive = false; this.onNavigationEnd(this.runOrigin, 'stopped', 'Neues Ziel gesetzt.') }
+        if (this.runActive) { this.runActive = false; this.endRun(this.runOrigin, 'stopped', 'Neues Ziel gesetzt.') }
         this.navigator.start({ x: command.x, z: command.z }, this.now())
         this.runActive = true; this.runOrigin = command.origin ? { ...command.origin } : null
         this.settleNavigation()
       } else if (command === 'stop_navigation') {
+        this.farm.off('Stopp')
         this.cancelChest()
         this.navigator.stop()
         this.settleNavigation()
@@ -137,6 +159,7 @@ export class BotController {
           this.state.inventory.drop(send, job.name, job.count, this.now()).then(job.resolve, job.reject)
         }
         this.stepChest(send)
+        this.farm.step(send)
         this.state.inventory.expire(this.now())
       }
       catch (error) { this.failed(error instanceof Error ? error.message : String(error)) }
@@ -255,19 +278,33 @@ export class BotController {
       })
       // Delta packets carry only the changed absolute coordinates.
       client.on('move_entity_delta', (packet: { runtime_entity_id: bigint | string; x?: number; y?: number; z?: number }) => {
-        const player = active() ? this.state.players.get(String(packet.runtime_entity_id)) : undefined
-        if (!player) return
-        this.movePlayer(packet.runtime_entity_id, {
-          x: Number.isFinite(packet.x) ? packet.x! : player.position.x,
-          y: Number.isFinite(packet.y) ? packet.y! : player.position.y,
-          z: Number.isFinite(packet.z) ? packet.z! : player.position.z
-        })
+        const id = String(packet.runtime_entity_id)
+        const entity = active() ? this.state.players.get(id) ?? this.state.items.get(id) : undefined
+        if (!entity) return
+        const position = {
+          x: Number.isFinite(packet.x) ? packet.x! : entity.position.x,
+          y: Number.isFinite(packet.y) ? packet.y! : entity.position.y,
+          z: Number.isFinite(packet.z) ? packet.z! : entity.position.z
+        }
+        if (this.state.players.has(id)) this.movePlayer(packet.runtime_entity_id, position)
+        else entity.position = position
+      })
+      // Dropped items (e.g. from harvesting) until someone picks them up or they despawn; the farmer walks onto them.
+      client.on('add_item_entity', (packet: { runtime_entity_id: bigint | string; entity_id_self?: bigint | string; item?: { network_id?: number; count?: number }; position: Position }) => {
+        if (!active() || !isPosition(packet.position)) return
+        const id = String(packet.runtime_entity_id)
+        this.state.items.set(id, { uniqueId: String(packet.entity_id_self ?? id), name: this.state.inventory.itemName(packet.item?.network_id ?? 0),
+          count: packet.item?.count ?? 0, position: { ...packet.position } })
+      })
+      client.on('take_item_entity', (packet: { runtime_entity_id: bigint | string }) => {
+        if (active()) this.state.items.delete(String(packet.runtime_entity_id))
       })
       // remove_entity carries the unique entity ID, which differs from the runtime ID on BDS.
       client.on('remove_entity', (packet: { entity_id_self: bigint | string }) => {
         if (!active()) return
         const uniqueId = String(packet.entity_id_self)
         for (const [id, player] of this.state.players) if (player.uniqueId === uniqueId) this.state.players.delete(id)
+        for (const [id, item] of this.state.items) if (item.uniqueId === uniqueId) this.state.items.delete(id)
       })
       // player_list names every player on the server; each record carries its own add/remove type.
       // The bot itself is recognised by unique ID or name.
@@ -491,7 +528,13 @@ export class BotController {
   private settleNavigation () {
     if (!this.runActive || ['planning', 'moving'].includes(this.state.navigation.status)) return
     this.runActive = false
-    this.onNavigationEnd(this.runOrigin, this.state.navigation.status, this.state.navigation.message)
+    this.endRun(this.runOrigin, this.state.navigation.status, this.state.navigation.message)
+  }
+
+  // The farmer's own runs go back to the farmer; all others to onNavigationEnd.
+  private endRun (origin: NavigationOrigin | null, status: string, message: string | null) {
+    if (origin?.farm !== undefined) this.farm.navigationEnded(origin.farm, status)
+    else this.onNavigationEnd(origin, status, message)
   }
 
   private failed (message: string) {
@@ -524,6 +567,7 @@ export class BotController {
     for (const job of this.drops.splice(0)) job.reject(new Error('Verbindung getrennt.'))
     this.chestJob?.reject(new Error('Verbindung getrennt.'))
     this.chestJob = null
+    this.farm.disconnected()
     this.navigator.reset()
     this.settleNavigation()
     this.state.resetWorld()

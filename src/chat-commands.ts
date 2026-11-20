@@ -21,7 +21,7 @@ const COME_DISTANCE = 2
 // After walking up, the receiver must still be this close (horizontally) or the bot keeps the items.
 const GIVE_REACH = 4
 const INVENTORY_LINES = 8
-const HELP = 'Befehle: hallo, go <Wegpunkt>, come, find <Block>, inventory, give <Item> [Anzahl], put <Item>|all [Anzahl], get <Item> [Anzahl], stop'
+const HELP = 'Befehle: hallo, go <Wegpunkt>, come, find <Block>, inventory, give <Item> [Anzahl], put <Item>|all [Anzahl], get <Item> [Anzahl], farming on|once|off [Wegpunkt], stop'
 // Every chest kind counts; ender chests, barrels and shulker boxes do not.
 export const CHEST_IDS = ['chest', 'trapped_chest', 'copper_chest', 'exposed_copper_chest', 'weathered_copper_chest', 'oxidized_copper_chest',
   'waxed_copper_chest', 'waxed_exposed_copper_chest', 'waxed_weathered_copper_chest', 'waxed_oxidized_copper_chest']
@@ -34,6 +34,18 @@ const MAX_AMOUNT = 2304
 const chestLabel = (count: number) => count === 1 ? '1 Kiste' : `${count} Kisten`
 const log = (message: string) => console.log('[chat] ' + message)
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/** The nearest free neighbour column of a chest (also diagonal) to stand on, with the feet at most one block above or below it. */
+export function chestStandSpot (world: { canStandAt (x: number, z: number, feetY: number): boolean }, chest: Position, from: Position) {
+  let best: { x: number; z: number; distance: number } | null = null
+  for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+    const x = chest.x + dx; const z = chest.z + dz
+    if (![chest.y, chest.y - 1, chest.y + 1].some(feetY => world.canStandAt(x + .5, z + .5, feetY))) continue
+    const distance = Math.hypot(x + .5 - from.x, z + .5 - from.z)
+    if (!best || distance < best.distance) best = { x, z, distance }
+  }
+  return best
+}
 
 export class ChatCommands {
   private prefix: RegExp
@@ -50,6 +62,7 @@ export class ChatCommands {
     this.prefix = new RegExp('^\\s*@?' + escape(name).replace(/ /g, '\\s+') + '(?:\\s*[,:])?(?:\\s+(.*))?$', 'is')
     bot.onChat = (sender, message) => { void this.handle(sender, message) }
     bot.onNavigationEnd = (origin, status, message) => this.navigationEnded(origin, status, message)
+    bot.farm.onReport = text => this.say(text)
   }
 
   async handle (sender: string, message: string) {
@@ -64,13 +77,15 @@ export class ChatCommands {
     try {
       switch (word.toLowerCase()) {
         case 'hallo': case 'hi': case 'hey': return this.say(`Hallo ${sender}!`)
-        case 'go': return await this.go(sender, argument)
-        case 'come': return this.come(sender)
+        // Commands that move the bot or use a chest pause farming; it resumes a minute after the last one.
+        case 'go': this.bot.farm.pause(); return await this.go(sender, argument)
+        case 'come': this.bot.farm.pause(); return this.come(sender)
         case 'find': return await this.find(sender, argument)
         case 'inventory': case 'inv': return this.inventory()
-        case 'give': return this.give(sender, rest)
-        case 'put': return await this.put(sender, rest)
-        case 'get': return await this.get(sender, rest)
+        case 'give': this.bot.farm.pause(); return this.give(sender, rest)
+        case 'put': this.bot.farm.pause(); return await this.put(sender, rest)
+        case 'get': this.bot.farm.pause(); return await this.get(sender, rest)
+        case 'farming': case 'farm': return await this.farming(sender, rest)
         case 'stop': return this.stop()
         default: return this.say(HELP)
       }
@@ -106,16 +121,8 @@ export class ChatCommands {
 
   private async go (sender: string, name: string) {
     if (!name) return this.say('Wohin? go <Wegpunkt>')
-    if (!this.places) return this.say('Wegpunkte sind nicht verfügbar.')
-    const dimension = dimensionId(this.bot.state.dimension)
-    if (dimension === null) return this.say('Meine Dimension ist gerade unbekannt.')
-    const wanted = name.replace(/\s+/g, ' ').toLowerCase()
-    const { pois } = await this.places.list(dimension)
-    let found: Poi[] = pois.filter(poi => poi.name.toLowerCase() === wanted)
-    if (!found.length) found = pois.filter(poi => poi.name.toLowerCase().startsWith(wanted))
-    if (!found.length) return this.say(`Wegpunkt "${name}" kenne ich nicht.`)
-    if (found.length > 1) return this.say('Mehrdeutig: ' + found.slice(0, 5).map(poi => poi.name).join(', ') + (found.length > 5 ? ', …' : ''))
-    this.navigate(found[0].x, found[0].z, { player: sender, label: found[0].name })
+    const place = await this.place(name)
+    if (place) this.navigate(place.x, place.z, { player: sender, label: place.name })
   }
 
   private come (sender: string) {
@@ -274,14 +281,7 @@ export class ChatCommands {
     const p = this.bot.state.position
     if (!p) return this.finishChestRun(run, 'Meine Position ist gerade unbekannt.')
     if (Math.hypot(chest.x + .5 - p.x, chest.y + .5 - p.y, chest.z + .5 - p.z) <= CHEST_REACH) return this.openChest(run, chest)
-    // Stand on the nearest free neighbour column (also diagonal), with the feet at most one block above or below the chest.
-    let best: { x: number; z: number; distance: number } | null = null
-    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
-      const x = chest.x + dx; const z = chest.z + dz
-      if (![chest.y, chest.y - 1, chest.y + 1].some(feetY => this.bot.state.canStandAt(x + .5, z + .5, feetY))) continue
-      const distance = Math.hypot(x + .5 - p.x, z + .5 - p.z)
-      if (!best || distance < best.distance) best = { x, z, distance }
-    }
+    const best = chestStandSpot(this.bot.state, chest, p)
     if (!best) { log(`[chest] Kein Standplatz an (${chest.x}, ${chest.y}, ${chest.z}); nächste Kiste.`); return this.nextChest(run) }
     run.candidates.unshift(chest)
     if (!this.bot.enqueue({ type: 'navigate', x: best.x, z: best.z, origin: { player: run.player, label: `Kiste ${chest.x} ${chest.y} ${chest.z}`, chest: run.token } })) {
@@ -374,7 +374,50 @@ export class ChatCommands {
     this.say(reason ? `${reason} ${summary}` : summary)
   }
 
+  /** farming [on|once [place]] | farming off: anchor is the bot's position or a saved place; without arguments the status. */
+  private async farming (sender: string, words: string[]) {
+    const farm = this.bot.farm
+    const [mode = '', ...placeWords] = words
+    const action = mode.toLowerCase()
+    if (!action) {
+      const status = farm.status()
+      if (!status.enabled) return this.say('Farming ist aus.' + (status.lastSummary ? ' Zuletzt: ' + status.lastSummary : ''))
+      return this.say(`Farming ${status.once ? 'einmal' : 'an'} bei ${status.anchor?.label} (Radius ${status.radius}): ${status.activity}.` +
+        (status.lastSummary ? ' Zuletzt: ' + status.lastSummary : ''))
+    }
+    if (action === 'off' || action === 'aus') { if (!farm.off()) this.say('Farming ist schon aus.'); return }
+    if (action !== 'on' && action !== 'an' && action !== 'once') return this.say('farming on [Wegpunkt], farming once [Wegpunkt], farming off oder farming')
+    const p = this.bot.state.position
+    if (!p) return this.say('Meine Position ist gerade unbekannt.')
+    let anchor = { x: p.x, z: p.z, label: 'meiner Position' }
+    const name = placeWords.join(' ')
+    if (name) {
+      const place = await this.place(name)
+      if (!place) return
+      anchor = { x: place.x + .5, z: place.z + .5, label: place.name }
+    }
+    log(`farming ${action} von ${sender}`)
+    const error = farm.start(anchor, action === 'once')
+    if (error) this.say(error)
+  }
+
+  // Resolves a saved place of the current dimension by exact name, then unique prefix; answers and returns null otherwise.
+  private async place (name: string): Promise<Poi | null> {
+    if (!this.places) { this.say('Wegpunkte sind nicht verfügbar.'); return null }
+    const dimension = dimensionId(this.bot.state.dimension)
+    if (dimension === null) { this.say('Meine Dimension ist gerade unbekannt.'); return null }
+    const wanted = name.replace(/\s+/g, ' ').toLowerCase()
+    const { pois } = await this.places.list(dimension)
+    let found: Poi[] = pois.filter(poi => poi.name.toLowerCase() === wanted)
+    if (!found.length) found = pois.filter(poi => poi.name.toLowerCase().startsWith(wanted))
+    if (!found.length) { this.say(`Wegpunkt "${name}" kenne ich nicht.`); return null }
+    if (found.length > 1) { this.say('Mehrdeutig: ' + found.slice(0, 5).map(poi => poi.name).join(', ') + (found.length > 5 ? ', …' : '')); return null }
+    return found[0]
+  }
+
   private stop () {
+    // Stop switches farming off; the farmer announces that itself.
+    if (this.bot.farm.off('Stopp')) { this.bot.enqueue('stop_navigation'); return }
     // A put/get run ends via its navigation or chest callbacks, which report what was moved.
     if (this.chestRun) { this.bot.enqueue('stop_navigation'); return }
     const active = ['planning', 'moving'].includes(this.bot.state.navigation.status)

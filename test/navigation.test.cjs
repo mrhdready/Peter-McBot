@@ -124,6 +124,34 @@ test('walkability rejects unknowns, fluids, partial support, head collisions and
   assert.equal(world.canStandAt(.5, .5, 71), false)
 })
 
+test('farmland and paths are standable 15/16-high surfaces, crops on them are passable', async t => {
+  const { world } = await setup(t)
+  for (const name of ['farmland', 'grass_path']) {
+    world.updateBlock({ x: 0, y: 70, z: 0 }, hash(name))
+    assert.equal(world.canStandAt(.5, .5, 70.9375), true, name)
+  }
+  world.updateBlock({ x: 0, y: 70, z: 0 }, hash('farmland'))
+  world.updateBlock({ x: 0, y: 71, z: 0 }, hash('wheat'))
+  assert.equal(world.canStandAt(.5, .5, 70.9375), true, 'A crop has no collision')
+})
+
+test('navigation crosses several farmland blocks (15/16 high) and leaves them again', async t => {
+  const { world, navigator, step } = await setup(t)
+  // Farmland's top is 1/16 below the stone floor's: route nodes must keep that height instead of rounding it to half blocks.
+  for (const x of [1, 2, 3]) {
+    world.updateBlock({ x, y: 70, z: 0 }, hash('farmland'))
+    world.updateBlock({ x, y: 71, z: 0 }, hash('wheat'))
+  }
+  navigator.start({ x: 3, z: 0 }, 0)
+  for (let i = 0; i < 400 && ['planning', 'moving'].includes(world.navigation.status); i++) step()
+  assert.equal(world.navigation.status, 'arrived', world.navigation.message)
+  assert.ok(Math.abs(world.position.y - EYE_HEIGHT - 70.9375) < .001)
+  navigator.start({ x: 5, z: 0 }, 0)
+  for (let i = 0; i < 400 && ['planning', 'moving'].includes(world.navigation.status); i++) step()
+  assert.equal(world.navigation.status, 'arrived', world.navigation.message)
+  assert.ok(Math.abs(world.position.y - EYE_HEIGHT - 71) < .001)
+})
+
 test('stop sends one neutral input and no later movement; unsafe targets send no inputs', async t => {
   const { world, navigator, step, sent } = await setup(t)
   navigator.synchroniseTick(50000n)
@@ -501,4 +529,49 @@ test('OPEN_DOORS defaults to on, accepts only on or off and reaches the world mo
   const bot = new BotController(readConfig({ BEDROCK_HOST: 'localhost', OPEN_DOORS: 'off' }), () => { throw new Error('No connection allowed') })
   assert.equal(bot.state.openDoors, false)
   bot.stop()
+})
+
+test('cropAt reads crop growth, blockNameAt names blocks and ripeCrops finds ripe crops within the horizontal radius, nearest first', async t => {
+  const { world } = await setup(t)
+  const wheat = registry.blocksByName.wheat
+  const growth = value => hashes.get(wheat.minStateId + value)
+  world.updateBlock({ x: 1, y: 70, z: 0 }, hash('farmland'))
+  world.updateBlock({ x: 1, y: 71, z: 0 }, growth(7))
+  world.updateBlock({ x: 3, y: 71, z: 0 }, growth(3))
+  world.updateBlock({ x: -4, y: 71, z: -4 }, growth(7))
+  assert.deepEqual(world.cropAt(1, 71, 0), { kind: 'wheat', growth: 7 })
+  assert.deepEqual(world.cropAt(3, 71, 0), { kind: 'wheat', growth: 3 })
+  assert.equal(world.cropAt(2, 71, 0), null)
+  assert.equal(world.blockNameAt(1, 70, 0), 'minecraft:farmland')
+  assert.equal(world.blockNameAt(2, 71, 0), 'minecraft:air')
+  assert.deepEqual(await world.ripeCrops({ x: .5, y: 72, z: .5 }, 24), [{ x: 1, y: 71, z: 0, kind: 'wheat' }, { x: -4, y: 71, z: -4, kind: 'wheat' }])
+  assert.deepEqual(await world.ripeCrops({ x: .5, y: 72, z: .5 }, 3), [{ x: 1, y: 71, z: 0, kind: 'wheat' }])
+})
+
+test('lookAt sends pitch, flags and extra fields; clickBlock options set face, click position and hotbar slot', async t => {
+  const { navigator, sent } = await setup(t)
+  const send = (name, params) => sent.push({ name, params })
+  navigator.lookAt(send, { x: 1.5, y: 71.25, z: .5 }, { flags: ['block_action'], fields: { block_action: [{ action: 'start_break' }] } })
+  const input = sent.at(-1).params
+  assert.ok(input.pitch > 45 && input.pitch < 60, 'Looks down at the crop')
+  assert.equal(input.interact_rotation.x, input.pitch)
+  assert.equal(Math.round(input.yaw), -90)
+  assert.ok(input.input_data.includes('block_action'))
+  assert.deepEqual(input.block_action, [{ action: 'start_break' }])
+  // Without extras, turning keeps pitch 0 and no block action.
+  navigator.face(send, { x: 1.5, z: .5 })
+  assert.equal(sent.at(-1).params.pitch, 0)
+  assert.equal(sent.at(-1).params.block_action, undefined)
+  navigator.clickBlock(send, { x: 1, y: 70, z: 0 }, 5, { network_id: 300 }, { face: 1, clickPos: { x: .5, y: 1, z: .5 }, hotbarSlot: 3 })
+  const planted = sent.at(-1).params.transaction.transaction_data
+  assert.equal(planted.face, 1)
+  assert.deepEqual(planted.click_pos, { x: .5, y: 1, z: .5 })
+  assert.equal(planted.hotbar_slot, 3)
+  assert.deepEqual(planted.held_item, { network_id: 300 })
+  // The default click hits the face towards the bot with hotbar slot 0.
+  navigator.clickBlock(send, { x: 1, y: 71, z: 0 }, 5)
+  const door = sent.at(-1).params.transaction.transaction_data
+  assert.equal(door.face, 4)
+  assert.deepEqual(door.click_pos, { x: 0, y: .5, z: .5 })
+  assert.equal(door.hotbar_slot, 0)
 })

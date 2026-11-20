@@ -103,6 +103,23 @@ export class Inventory {
     return this.window
   }
 
+  /** The registry name of a network item ID, "#<id>" when unknown. */
+  itemName (networkId: number) {
+    return this.names.get(networkId) ?? '#' + networkId
+  }
+
+  /**
+   * A slot's item as a packet item with the server's current count and stack ID; the raw packet item may be stale after a move,
+   * or missing when the slot was filled by a confirmed move (then another stack of the same item, or the registry, supplies it).
+   */
+  packetItem (slot: number): Record<string, unknown> {
+    const value = this.slots[slot]
+    if (!value) return EMPTY_ITEM
+    const networkId = [...this.names].find(([, name]) => name === value.name)?.[0] ?? 0
+    const raw = value.raw ?? this.slots.find(other => other?.name === value.name && other.raw)?.raw ?? { ...EMPTY_ITEM, network_id: networkId }
+    return { ...(raw as Record<string, unknown>), count: value.count, has_stack_id: true, stack_id: value.stackId }
+  }
+
   /** The bot's 36 slots (copies). */
   slotList (): (Slot | null)[] {
     return this.slots.map(slot => slot && { ...slot })

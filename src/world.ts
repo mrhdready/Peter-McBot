@@ -23,6 +23,11 @@ export class WorldError extends Error {
   constructor (message: string, readonly status = 400) { super(message) }
 }
 
+/** Crops the farming mode harvests; each has only the `growth` state (0..7, ripe at 7) in minecraft-data 1.26.60. */
+export const CROP_KINDS = ['wheat', 'carrots', 'potatoes'] as const
+export type CropKind = typeof CROP_KINDS[number]
+export const RIPE_GROWTH = 7
+
 export function dimensionId (dimension: number | string | null): number | null {
   if (typeof dimension === 'number' && [0, 1, 2].includes(dimension)) return dimension
   return ({ overworld: 0, nether: 1, end: 2 } as Record<string, number>)[String(dimension)] ?? null
@@ -365,6 +370,54 @@ export class ChunkWorld {
   blockRuntimeIdAt (x: number, y: number, z: number): number | null {
     const id = this.stateAt(x, y, z)
     return id === null ? null : this.runtimeIds.get(id) ?? null
+  }
+
+  /** Block name ("minecraft:…") at (x, y, z) on layer 0, or null while unknown. */
+  blockNameAt (x: number, y: number, z: number): string | null {
+    const id = this.stateAt(x, y, z)
+    return id === null ? null : this.stateNames[id] ?? null
+  }
+
+  /** The crop at (x, y, z) and its growth 0..7, or null. `growth` is a crop's only state, so it is the offset in its state range. */
+  cropAt (x: number, y: number, z: number): { kind: CropKind; growth: number } | null {
+    const id = this.stateAt(x, y, z)
+    if (id === null || !this.blocks) return null
+    for (const kind of CROP_KINDS) {
+      const range = this.blocks['minecraft:' + kind]
+      if (range && id >= range.min && id <= range.max) return { kind, growth: id - range.min }
+    }
+    return null
+  }
+
+  /**
+   * Ripe crops (growth 7) whose column lies within `radius` blocks horizontally of `anchor`, nearest first (at most 256).
+   * Scans only the loaded sections that touch the area; unknown sections simply yield nothing.
+   */
+  async ripeCrops (anchor: Position, radius: number, signal?: AbortSignal): Promise<Array<Position & { kind: CropKind }>> {
+    if (!this.blocks) throw new WorldError('World data is not ready', 409)
+    const ripe = new Map<number, CropKind>()
+    for (const kind of CROP_KINDS) { const range = this.blocks['minecraft:' + kind]; if (range) ripe.set(range.min + RIPE_GROWTH, kind) }
+    const generation = this.generation
+    const found: Array<Position & { kind: CropKind; distance: number }> = []
+    const near = (from: number, to: number, value: number) => Math.max(from - value, 0, value - to)
+    for (const column of [...this.chunks.values()]) {
+      if (Math.hypot(near(column.x * 16, column.x * 16 + 16, anchor.x), near(column.z * 16, column.z * 16 + 16, anchor.z)) > radius) continue
+      for (const [sectionY, section] of [...column.sections]) {
+        if (!section.data) continue
+        await yieldLoop()
+        if (signal?.aborted) throw new WorldError('Search cancelled', 499)
+        if (this.generation !== generation) throw new WorldError('World changed; repeat search', 409)
+        for (let i = 0; i < 4096; i++) {
+          const kind = ripe.get(section.data[i])
+          if (!kind) continue
+          const x = column.x * 16 + (i >>> 8); const y = sectionY * 16 + ((i >>> 4) & 15); const z = column.z * 16 + (i & 15)
+          const distance = Math.hypot(x + .5 - anchor.x, z + .5 - anchor.z)
+          if (distance <= radius) found.push({ x, y, z, kind, distance })
+        }
+      }
+    }
+    found.sort((a, b) => a.distance - b.distance || a.x - b.x || a.z - b.z || a.y - b.y)
+    return found.slice(0, 256).map(({ x, y, z, kind }) => ({ x, y, z, kind }))
   }
 
   // A hand-openable door or fence gate in block (x, y, z), resolved to its lower half: position, open state and network runtime ID.

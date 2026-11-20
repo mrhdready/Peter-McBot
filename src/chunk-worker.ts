@@ -23,7 +23,8 @@ port.on('message', async message => {
           collisionIds[id] = Array.isArray(ids) ? ids[id - block.minStateId] : ids
           if (boxes.length === 0) walkFlags[id] = 1
           else if (boxes.length === 1 && boxes[0].every((v: number, i: number) => v === (i < 3 ? 0 : 1))) walkFlags[id] = 2
-          else if (/(?:_slab|_stairs)$/.test(block.name)) walkFlags[id] = 2
+          // Farmland and paths are 15/16 high; walking on them is safe (only falling tramples farmland).
+          else if (/(?:_slab|_stairs)$|^(?:farmland|grass_path)$/.test(block.name)) walkFlags[id] = 2
         }
       }
       // minecraft-data gives every door state the same west-side panel. Derive the vanilla panel from facing, open and hinge instead:

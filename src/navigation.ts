@@ -204,17 +204,30 @@ export class Navigator {
   /**
    * Right-clicks a block with hotbar slot 0 (`held` is that slot's item) on the face that points towards the bot
    * (2 north, 3 south, 4 west, 5 east). The server handles the click only together with a following input packet.
+   * `options` override face, click position and hotbar slot, e.g. face 1 (top) for planting on farmland.
    */
-  clickBlock (send: Send, block: Position, runtimeId: number, held: unknown = EMPTY_ITEM) {
+  clickBlock (send: Send, block: Position, runtimeId: number, held: unknown = EMPTY_ITEM, options: { face?: number; clickPos?: Position; hotbarSlot?: number } = {}) {
     const p = this.world.position
     if (!p) return
     const dx = p.x - block.x - .5; const dz = p.z - block.z - .5
-    const face = Math.abs(dx) > Math.abs(dz) ? (dx > 0 ? 5 : 4) : (dz > 0 ? 3 : 2)
-    const click = { x: face === 5 ? 1 : face === 4 ? 0 : .5, y: .5, z: face === 3 ? 1 : face === 2 ? 0 : .5 }
+    const face = options.face ?? (Math.abs(dx) > Math.abs(dz) ? (dx > 0 ? 5 : 4) : (dz > 0 ? 3 : 2))
+    const click = options.clickPos ?? { x: face === 5 ? 1 : face === 4 ? 0 : .5, y: .5, z: face === 3 ? 1 : face === 2 ? 0 : .5 }
     this.yaw = Math.atan2(-(block.x + .5 - p.x), block.z + .5 - p.z) * 180 / Math.PI
     send('inventory_transaction', { transaction: { legacy: { legacy_request_id: 0 }, transaction_type: 'item_use', actions: [],
-      transaction_data: { action_type: 'click_block', trigger_type: 'player_input', block_position: { x: block.x, y: block.y, z: block.z }, face, hotbar_slot: 0, hand: 'main_hand',
+      transaction_data: { action_type: 'click_block', trigger_type: 'player_input', block_position: { x: block.x, y: block.y, z: block.z }, face, hotbar_slot: options.hotbarSlot ?? 0, hand: 'main_hand',
         held_item: held, player_pos: { ...p }, click_pos: click, block_runtime_id: runtimeId, client_prediction: 'success', client_cooldown_state: 'off' } } })
+  }
+
+  /**
+   * One input packet without moving that looks at `point` (yaw and pitch). `extra` adds input flags and packet fields,
+   * e.g. `block_action` for breaking a block (verified live: flag `block_action` plus the action list).
+   */
+  lookAt (send: Send, point: Position, extra: { flags?: string[]; fields?: Record<string, unknown> } = {}) {
+    const p = this.world.position
+    if (!p) return
+    this.yaw = Math.atan2(-(point.x - p.x), point.z - p.z) * 180 / Math.PI
+    const pitch = Math.atan2(p.y - point.y, Math.hypot(point.x - p.x, point.z - p.z)) * 180 / Math.PI
+    this.sendInput(send, p, { x: 0, y: -.0784, z: 0 }, 0, this.grounded, false, { pitch, ...extra })
   }
 
   /** Turns the bot towards a point with one input packet without moving it. */
@@ -417,7 +430,9 @@ export class Navigator {
     if (!this.move(send, velocity.x, velocity.z, Math.hypot(ax, az) / factor, needsJump)) this.replan('Nächster Schritt oder Landebereich ist nicht sicher begehbar.')
   }
 
-  private sendInput (send: Send, position: Position, velocity: Position, input: number, grounded: boolean, jump = false) {
+  private sendInput (send: Send, position: Position, velocity: Position, input: number, grounded: boolean, jump = false,
+    look: { pitch?: number; flags?: string[]; fields?: Record<string, unknown> } = {}) {
+    const pitch = look.pitch ?? 0
     this.inputActive = input > 0
     const yaw = this.yaw * Math.PI / 180
     // A jump is a one-tick press; release on the next input prevents repeated jumps.
@@ -429,16 +444,18 @@ export class Navigator {
     if (!jump && this.jumpReleased) flags.push('jump_released_raw')
     if (jump) flags.push('jump_pressed_raw', 'jump_current_raw')
     this.jumpReleased = jump
+    if (look.flags) flags.push(...look.flags)
     const clockTick = this.tickBase + BigInt(this.world.tick)
     this.tick = clockTick > this.tick ? clockTick : this.tick + 1n
     send('player_auth_input', {
-      pitch: 0, yaw: this.yaw, head_yaw: this.yaw, position: { ...position },
+      pitch, yaw: this.yaw, head_yaw: this.yaw, position: { ...position },
       move_vector: { x: 0, z: input }, analogue_move_vector: { x: 0, z: input }, raw_move_vector: { x: 0, z: input },
       input_data: flags,
-      input_mode: 'game_pad', play_mode: 'normal', interaction_model: 'crosshair', interact_rotation: { x: 0, z: this.yaw },
+      input_mode: 'game_pad', play_mode: 'normal', interaction_model: 'crosshair', interact_rotation: { x: pitch, z: this.yaw },
       tick: this.tick, delta: { ...velocity },
       transaction: undefined, item_stack_request: undefined, block_action: undefined, vehicle_rotation: undefined, predicted_vehicle: undefined,
-      camera_orientation: { x: -Math.sin(yaw), y: 0, z: Math.cos(yaw) }
+      camera_orientation: { x: -Math.sin(yaw), y: 0, z: Math.cos(yaw) },
+      ...look.fields
     })
   }
 }

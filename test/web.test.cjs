@@ -66,6 +66,46 @@ test('HTTP queues commands, validates requests, and streams state using SSE', as
   assert.equal((await fetch(base + '/missing')).status, 404)
 })
 
+test('POST /api/farm validates the request, switches farming and the snapshot carries the farm status', async t => {
+  const { EventEmitter } = require('node:events')
+  let time = 1000
+  const client = Object.assign(new EventEmitter(), { entityId: 10n, queue () {}, close () {} })
+  const bot = new BotController(readConfig({ BEDROCK_HOST: 'localhost' }), () => client, () => {}, () => time)
+  const web = createWebServer(bot)
+  t.after(() => { bot.stop(); web.close() })
+  web.server.listen(0, '127.0.0.1')
+  await once(web.server, 'listening')
+  const base = `http://127.0.0.1:${web.server.address().port}`
+  const post = (body, headers = { 'Content-Type': 'application/json' }) => fetch(base + '/api/farm', { method: 'POST', headers, body })
+  assert.equal((await post('{"action":"on"}', {})).status, 415)
+  assert.equal((await post('{"action":"on"}', { 'Content-Type': 'application/json', Origin: 'https://foreign.example' })).status, 403)
+  assert.equal((await post('{"action":"maybe"}')).status, 400)
+  assert.equal((await post('{"action":"on","place":5}')).status, 400)
+  assert.equal((await post('[]')).status, 400)
+  assert.equal((await post(JSON.stringify({ action: 'on', place: 'x'.repeat(200) }))).status, 413)
+  assert.equal((await post('{"action":"on"}')).status, 409, 'Farming needs a spawned bot')
+  bot.enqueue('connect'); bot.step()
+  client.emit('start_game', { player_position: { x: .5, y: 72.62, z: .5 }, dimension: 0 })
+  client.emit('spawn')
+  // Without the place store a place id cannot be resolved.
+  assert.equal((await post('{"action":"on","place":"0f0f0f0f-0000-0000-0000-000000000000"}')).status, 409)
+  const on = await post('{"action":"on","place":null}')
+  assert.equal(on.status, 202)
+  assert.equal((await on.json()).farm.enabled, true)
+  assert.deepEqual(bot.farm.status().anchor, { x: .5, z: .5, label: 'Bot-Position' })
+  assert.equal((await fetch(base + '/api/status').then(r => r.json())).status, 'spawned')
+  const abort = new AbortController()
+  t.after(() => abort.abort())
+  const reader = (await fetch(base + '/api/events', { signal: abort.signal })).body.getReader()
+  const snapshot = JSON.parse(new TextDecoder().decode((await reader.read()).value).replace(/^data: /, ''))
+  await reader.cancel()
+  assert.equal(snapshot.farm.enabled, true)
+  assert.equal(snapshot.farm.radius, 24)
+  const off = await post('{"action":"off"}')
+  assert.equal(off.status, 202)
+  assert.equal((await off.json()).farm.enabled, false)
+})
+
 test('HTTP block search returns bounded nearest world coordinates from known data', { timeout: 10000 }, async t => {
   const bot = new BotController(readConfig({ BEDROCK_HOST: 'localhost' }), () => { throw new Error('unused') })
   const web = createWebServer(bot)
@@ -242,6 +282,23 @@ test('map markers select underground hits, survive map refresh and discard obsol
   assert.equal(byId('inventory-heading').textContent, 'Inventar (15)')
   assert.deepEqual(byId('inventory-list').children.map(row => row.textContent), ['dirt ×12', 'torch ×3'])
   assert.equal(byId('inventory-empty').hidden, true)
+  // The farm panel mirrors the farming status; the switch posts on (with the chosen anchor) or off.
+  state.farm = { enabled: true, once: false, anchor: { x: 0, z: 0, label: 'Bot-Position' }, radius: 24, activity: 'Erntet', pausedUntil: null, lastSummary: '2 Weizen geerntet, 2 neu gepflanzt.' }
+  await publish()
+  assert.equal(byId('farm-toggle').textContent, 'Farming beenden')
+  assert.equal(byId('farm-status').textContent, 'Erntet – Anker: Bot-Position, Radius 24. Zuletzt: 2 Weizen geerntet, 2 neu gepflanzt.')
+  assert.equal(byId('farm-anchor').disabled, true)
+  await byId('farm-toggle').onclick()
+  assert.equal(requests.at(-1).url, '/api/farm')
+  assert.deepEqual(JSON.parse(requests.at(-1).options.body), { action: 'off' })
+  state.farm = { ...state.farm, enabled: false, anchor: null }
+  await publish()
+  assert.equal(byId('farm-toggle').textContent, 'Farming starten')
+  assert.equal(byId('farm-status').textContent, 'Farming ist aus. Zuletzt: 2 Weizen geerntet, 2 neu gepflanzt.')
+  assert.equal(byId('farm-anchor').disabled, false)
+  await byId('farm-toggle').onclick()
+  assert.deepEqual(JSON.parse(requests.at(-1).options.body), { action: 'on', place: null })
+  delete state.farm
   state.roster = []
   state.players = []
   await publish()
