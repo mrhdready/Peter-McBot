@@ -350,7 +350,8 @@ export class Navigator {
       const kind = this.waypointKind(this.previousWaypoint!, waypoint, path[1])
       const d = distance(p, waypoint)
       const onWaypointLevel = this.grounded && Math.abs(p.y - EYE_HEIGHT - waypoint.y) < .08
-      const reached = onWaypointLevel && (kind === 'stop' ? d < .08 : kind === 'corner' ? d < CORNER_RADIUS : crossed(p, this.previousWaypoint!, waypoint))
+      // A careful segment brakes towards even a pass waypoint and approaches it without ever crossing it, so .08 also counts.
+      const reached = onWaypointLevel && (d < .08 || (kind === 'corner' ? d < CORNER_RADIUS : kind === 'pass' && crossed(p, this.previousWaypoint!, waypoint)))
       if (!reached) break
       path.shift(); nav.remaining = path.length
       this.bestDistance = Infinity; this.progressAt = now

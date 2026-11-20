@@ -26,6 +26,28 @@ port.on('message', async message => {
           else if (/(?:_slab|_stairs)$/.test(block.name)) walkFlags[id] = 2
         }
       }
+      // minecraft-data gives every door state the same west-side panel. Derive the vanilla panel from facing, open and hinge instead:
+      // closed it lies on the face opposite its facing; open it swings to the side given by the hinge.
+      const shapes: Record<number, number[][]> = { ...registry.blockCollisionShapes.shapes }
+      const T = 3 / 16
+      const panels: Record<string, number[][]> = {
+        east: [[0, 0, 0, T, 1, 1]], west: [[1 - T, 0, 0, 1, 1, 1]], south: [[0, 0, 0, 1, 1, T]], north: [[0, 0, 1 - T, 1, 1, 1]]
+      }
+      const swing: Record<string, [string, string]> = { east: ['south', 'north'], south: ['west', 'east'], west: ['north', 'south'], north: ['east', 'west'] }
+      const panelIds: Record<string, number> = {}
+      let nextShape = Math.max(0, ...Object.keys(shapes).map(Number)) + 1
+      for (const side of Object.keys(panels)) { panelIds[side] = nextShape; shapes[nextShape++] = panels[side] }
+      const stateValue = (states: any, name: string) => states?.[name]?.value ?? states?.[name]
+      for (const block of Object.values(registry.blocksByName) as any[]) {
+        if (!/(?:^|_)door$/.test(block.name)) continue
+        for (let id = block.minStateId; id <= block.maxStateId; id++) {
+          const states = registry.blockStates[id]?.states
+          const facing = stateValue(states, 'minecraft:cardinal_direction')
+          if (!swing[facing]) continue
+          const side = Number(stateValue(states, 'open_bit')) === 1 ? swing[facing][Number(stateValue(states, 'door_hinge_bit')) === 1 ? 1 : 0] : facing
+          collisionIds[id] = panelIds[side]; walkFlags[id] = 0
+        }
+      }
       // Hand-openable doors (all but iron) and fence gates: pair each closed state with the open state that has the same other properties.
       const doorToggle = new Int32Array(registry.blockStates.length).fill(-1)
       const doorOpen = new Uint8Array(registry.blockStates.length)
@@ -45,7 +67,7 @@ port.on('message', async message => {
           doorToggle[closed] = open; doorToggle[open] = closed; doorOpen[open] = 1
         }
       }
-      port.postMessage({ type: 'ready', blocks, air: registry.blocksByName.air.defaultState, runtimePairs, walkFlags, collisionIds, collisionShapes: registry.blockCollisionShapes.shapes, doorToggle, doorOpen },
+      port.postMessage({ type: 'ready', blocks, air: registry.blocksByName.air.defaultState, runtimePairs, walkFlags, collisionIds, collisionShapes: shapes, doorToggle, doorOpen },
         [runtimePairs.buffer, walkFlags.buffer, collisionIds.buffer, doorToggle.buffer, doorOpen.buffer])
       return
     }

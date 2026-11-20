@@ -330,6 +330,15 @@ test('level turns on safe ground slow down without stopping', async t => {
   assert.ok(travel.length && travel.every(s => s.length > .05), 'Turns keep moving instead of stopping')
 })
 
+test('a pass waypoint reached on a careful segment after an edge is consumed instead of stalling', async t => {
+  const { world, navigator, step } = await setup(t)
+  // The drop next to the first two waypoints makes the segment into the third (a pass waypoint) careful.
+  world.updateBlock({ x: 0, y: 70, z: -1 }, hash('air'))
+  navigator.start({ x: 4, z: 0 }, 0)
+  for (let i = 0; i < 600 && ['planning', 'moving'].includes(world.navigation.status); i++) step()
+  assert.equal(world.navigation.status, 'arrived', world.navigation.message)
+})
+
 test('a one-block bridge between drops keeps the careful speed', async t => {
   const { world, navigator, step, sent } = await setup(t)
   for (let x = 1; x <= 3; x++) for (const z of [-1, 1]) world.updateBlock({ x, y: 70, z }, hash('air'))
@@ -377,14 +386,14 @@ function placeDoor (world, name, open, direction) {
 }
 const passesDoorBlock = world => world.terrain.transition({ x: 1.5, y: 71, z: .5 }, 2.5, .5) !== null &&
   world.terrain.transition({ x: 2.5, y: 71, z: .5 }, 3.5, .5) !== null
-// A stone wall at x=2 whose only gap at z=0 holds a door that, closed, blocks walking along X.
+// A stone wall at x=2 whose only gap at z=0 holds a door whose closed panel already blocks entering the door block from the west.
 function doorWall (world, name = 'wooden_door') {
   for (let z = -5; z <= 5; z++) if (z !== 0) for (const y of [71, 72]) world.updateBlock({ x: 2, y, z }, hash('stone'))
   for (const direction of DIRECTIONS) {
     placeDoor(world, name, true, direction)
     const open = passesDoorBlock(world)
     placeDoor(world, name, false, direction)
-    if (open && !passesDoorBlock(world)) return direction
+    if (open && world.terrain.transition({ x: 1.5, y: 71, z: .5 }, 2.5, .5) === null) return direction
   }
   assert.fail('No door direction blocks the gap when closed')
 }
