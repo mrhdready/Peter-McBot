@@ -64,9 +64,8 @@ Kernfall der Neugestaltung: **kein Scrollen der Seite** zwischen Zielwahl und St
 |---|---|---|---|
 | 4.1 | Suche mit Limit 100 | Trefferliste scrollt innerhalb des Panels, Tabellenkopf bleibt stehen | |
 | 4.2 | In einer Zeile „Ziel“ klicken | X/Z übernommen, Treffer weiß umrandet, Vorschau erscheint, keine Bewegung | |
-| 4.3 | ⛏️-Pin auf der Karte überfahren bzw. antippen, dann anklicken | Overlay mit Block-ID, X/Z, Y-Werten und Entfernung; Klick übernimmt das Ziel, Pin wird weiß umrandet; bei mehreren Y-Treffern erscheinen Auswahl-Buttons | |
+| 4.3 | Türkisen Marker auf der Karte anklicken | Wie bisher; bei mehreren Y-Treffern erscheinen Auswahl-Buttons | |
 | 4.4 | Andere Dimension in der Archivkarte, dann „Ziel“ in der Liste | Ziel wird übernommen (Treffer stammen aus der verbundenen Dimension) | |
-| 4.5 | „Zurücksetzen“ nach einer Suche und während einer laufenden Suche | Treffer, Pins und Ergebnistext verschwinden, Suche ist abgebrochen; Block-ID, Limit und Ziel bleiben | |
 
 ## 5. Mobil (< 900 px, z. B. 375 × 812 oder echtes Handy)
 

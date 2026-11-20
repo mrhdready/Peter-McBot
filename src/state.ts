@@ -20,12 +20,15 @@ export class WorldState extends ChunkWorld {
   tick = 0
   // Other players the server currently reports near the bot, keyed by runtime entity ID; memory only.
   players = new Map<string, Player>()
+  // All players online on the server (from player_list) except the bot, keyed by UUID; memory only.
+  roster = new Map<string, string>()
   resetWorld () {
     this.position = null
     this.lastServerPosition = null
     this.positionSource = 'server'
     this.dimension = null
     this.players.clear()
+    this.roster.clear()
     this.clearChunks()
   }
 
@@ -39,6 +42,11 @@ export class WorldState extends ChunkWorld {
       navigation: { ...this.navigation, path: this.navigation.path.map(point => ({ ...point })), target: this.navigation.target ? { ...this.navigation.target } : null },
       dimension: this.dimension,
       players: [...this.players].map(([id, player]) => ({ id, name: player.name, ...player.position })),
+      // A roster entry carries the position only while that player is in entity range.
+      roster: [...this.roster].map(([uuid, name]) => {
+        const near = [...this.players.values()].find(player => player.uuid === uuid)
+        return { name, position: near ? { ...near.position } : null }
+      }),
       lastError: this.lastError,
       tick: this.tick,
       worldRevision: this.worldRevision,

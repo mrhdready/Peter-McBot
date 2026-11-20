@@ -137,6 +137,7 @@ export class BotController {
       const active = () => this.client === client
       let initialSpawnPending = true
       let loadingFinished = false
+      let selfUniqueId: string | null = null
       const finishLoading = () => {
         if (!loadingFinished && !initialSpawnPending && this.state.status === 'spawned') {
           loadingFinished = true
@@ -147,8 +148,9 @@ export class BotController {
       client.on('error', (error: Error) => { if (active()) this.failed(error.message) })
       client.on('kick', (packet: { message?: string }) => { if (active()) this.failed(packet.message || 'Server kick') })
       client.on('close', () => { if (active()) this.failed('Connection closed') })
-      client.on('start_game', (packet: { player_position: Position; dimension: number | string; block_network_ids_are_hashes?: boolean; current_tick?: bigint }) => {
+      client.on('start_game', (packet: { entity_id?: bigint | string; player_position: Position; dimension: number | string; block_network_ids_are_hashes?: boolean; current_tick?: bigint }) => {
         if (!active()) return
+        if (packet.entity_id !== undefined) selfUniqueId = String(packet.entity_id)
         if (typeof packet.block_network_ids_are_hashes === 'boolean') this.state.beginWorld(packet.dimension, packet.block_network_ids_are_hashes)
         if (typeof packet.current_tick === 'bigint') this.navigator.synchroniseTick(packet.current_tick)
         this.updatePosition(packet.player_position)
@@ -209,11 +211,20 @@ export class BotController {
         const uniqueId = String(packet.entity_id_self)
         for (const [id, player] of this.state.players) if (player.uniqueId === uniqueId) this.state.players.delete(id)
       })
-      // A player who leaves the server is removed from the player list by UUID.
-      client.on('player_list', (packet: { records?: { type?: string; records?: { uuid?: string }[] } }) => {
-        if (!active() || packet.records?.type !== 'remove') return
-        const left = new Set((packet.records.records ?? []).map(record => String(record.uuid)))
-        for (const [id, player] of this.state.players) if (left.has(player.uuid)) this.state.players.delete(id)
+      // player_list names every player on the server; the bot itself is recognised by unique ID or name.
+      client.on('player_list', (packet: { records?: { type?: string; records?: { uuid?: string; entity_unique_id?: bigint | string; username?: string }[] } }) => {
+        if (!active()) return
+        const records = packet.records?.records ?? []
+        if (packet.records?.type === 'add') {
+          for (const record of records) {
+            if (!record.uuid || String(record.entity_unique_id) === selfUniqueId || record.username === this.config.username) continue
+            this.state.roster.set(String(record.uuid), String(record.username ?? ''))
+          }
+        } else if (packet.records?.type === 'remove') {
+          const left = new Set(records.map(record => String(record.uuid)))
+          for (const uuid of left) this.state.roster.delete(uuid)
+          for (const [id, player] of this.state.players) if (left.has(player.uuid)) this.state.players.delete(id)
+        }
       })
       client.on('server_post_move', (packet: { position: Position }) => {
         if (active()) this.updatePosition(packet.position)
