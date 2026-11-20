@@ -363,3 +363,123 @@ test('unknown waypoint data pauses movement for up to three seconds before repla
   for (let i = 0; i < 70; i++) step()
   assert.equal(world.navigation.replans, 1, 'Replans once after the wait expires')
 })
+
+/* Doors and fence gates: planned as passable, opened once, avoided when they stay closed, closed again behind the bot. */
+const stateId = (name, props) => registry.blockStates.findIndex(s => s?.name === name &&
+  Object.entries(props).every(([key, value]) => (s.states[key]?.value ?? s.states[key]) === value))
+const DIRECTIONS = ['south', 'west', 'north', 'east']
+function placeDoor (world, name, open, direction) {
+  for (const upper of [0, 1]) {
+    const id = stateId(name, { open_bit: open ? 1 : 0, upper_block_bit: upper, door_hinge_bit: 0, 'minecraft:cardinal_direction': direction })
+    assert.ok(id >= 0, `${name} state exists`)
+    world.updateBlock({ x: 2, y: 71 + upper, z: 0 }, hashes.get(id))
+  }
+}
+const passesDoorBlock = world => world.terrain.transition({ x: 1.5, y: 71, z: .5 }, 2.5, .5) !== null &&
+  world.terrain.transition({ x: 2.5, y: 71, z: .5 }, 3.5, .5) !== null
+// A stone wall at x=2 whose only gap at z=0 holds a door that, closed, blocks walking along X.
+function doorWall (world, name = 'wooden_door') {
+  for (let z = -5; z <= 5; z++) if (z !== 0) for (const y of [71, 72]) world.updateBlock({ x: 2, y, z }, hash('stone'))
+  for (const direction of DIRECTIONS) {
+    placeDoor(world, name, true, direction)
+    const open = passesDoorBlock(world)
+    placeDoor(world, name, false, direction)
+    if (open && !passesDoorBlock(world)) return direction
+  }
+  assert.fail('No door direction blocks the gap when closed')
+}
+const clicks = sent => sent.filter(p => p.name === 'inventory_transaction')
+async function walkToDoor (world, step, sent) {
+  for (let i = 0; i < 400 && !clicks(sent).length && ['planning', 'moving'].includes(world.navigation.status); i++) step()
+  assert.equal(clicks(sent).length, 1, world.navigation.message)
+}
+
+test('routes pass closed wooden doors and fence gates only with door opening enabled; iron doors stay walls', async t => {
+  const { world, sent } = await setup(t)
+  const direction = doorWall(world)
+  const path = await plan(world, { x: 4, z: 0 })
+  assert.ok(path.some(p => p.x === 2.5 && p.z === .5), 'Route leads through the closed door')
+  world.openDoors = false
+  await assert.rejects(plan(world, { x: 4, z: 0 }), /Kein Weg/)
+  world.openDoors = true
+  placeDoor(world, 'iron_door', false, direction)
+  await assert.rejects(plan(world, { x: 4, z: 0 }), /Kein Weg/)
+  world.updateBlock({ x: 2, y: 72, z: 0 }, hash('air'))
+  const gate = open => DIRECTIONS.map(d => stateId('fence_gate', { open_bit: open, in_wall_bit: 0, 'minecraft:cardinal_direction': d }))
+  const blocking = gate(0).findIndex(id => { world.updateBlock({ x: 2, y: 71, z: 0 }, hashes.get(id)); return !passesDoorBlock(world) })
+  assert.ok(blocking >= 0, 'A closed fence gate blocks the gap')
+  world.updateBlock({ x: 2, y: 71, z: 0 }, hashes.get(gate(1)[blocking]))
+  assert.ok(passesDoorBlock(world), 'The open fence gate is passable')
+  world.updateBlock({ x: 2, y: 71, z: 0 }, hashes.get(gate(0)[blocking]))
+  assert.ok((await plan(world, { x: 4, z: 0 })).some(p => p.x === 2.5 && p.z === .5), 'Route leads through the closed fence gate')
+  assert.equal(sent.length, 0, 'Planning never sends packets')
+})
+
+test('navigation stops at a closed door, clicks it once, passes after the server opens it and closes it behind itself', async t => {
+  const { world, navigator, step, sent } = await setup(t)
+  const direction = doorWall(world)
+  navigator.start({ x: 4, z: 0 }, 0)
+  await walkToDoor(world, step, sent)
+  const { transaction } = clicks(sent)[0].params
+  assert.equal(transaction.transaction_type, 'item_use')
+  assert.equal(transaction.transaction_data.action_type, 'click_block')
+  assert.deepEqual(transaction.transaction_data.block_position, { x: 2, y: 71, z: 0 })
+  assert.equal(transaction.transaction_data.face, 4, 'Clicks the west face, towards the bot')
+  const serializer = require('bedrock-protocol/src/transforms/serializer').createSerializer('1.26.60')
+  assert.ok(serializer.createPacketBuffer(clicks(sent)[0]).length > 0)
+  assert.ok(Math.abs(world.position.x - 1.5) < .08, 'Waits in front of the door')
+  for (let i = 0; i < 20; i++) step()
+  assert.equal(world.navigation.status, 'moving')
+  assert.equal(clicks(sent).length, 1, 'One click only while waiting')
+  assert.ok(Math.abs(world.position.x - 1.5) < .08)
+  placeDoor(world, 'wooden_door', true, direction)
+  for (let i = 0; i < 400 && ['planning', 'moving'].includes(world.navigation.status); i++) step()
+  assert.equal(world.navigation.status, 'arrived', world.navigation.message)
+  assert.equal(world.navigation.replans, 0)
+  assert.equal(clicks(sent).length, 2, 'Closes the door it opened')
+  const close = clicks(sent)[1]
+  assert.equal(close.params.transaction.transaction_data.face, 5, 'Closes from the east side')
+  assert.ok(close.params.transaction.transaction_data.player_pos.x >= 3.3, 'Closes only after leaving the door block')
+})
+
+test('a door stays open when another player is next to it', async t => {
+  const { world, navigator, step, sent } = await setup(t)
+  const direction = doorWall(world)
+  world.players.set('7', { name: 'Alex', position: { x: 3.5, y: 71 + EYE_HEIGHT, z: 1.5 }, uniqueId: '7', uuid: 'u' })
+  navigator.start({ x: 4, z: 0 }, 0)
+  await walkToDoor(world, step, sent)
+  placeDoor(world, 'wooden_door', true, direction)
+  for (let i = 0; i < 400 && ['planning', 'moving'].includes(world.navigation.status); i++) step()
+  assert.equal(world.navigation.status, 'arrived', world.navigation.message)
+  for (let i = 0; i < 10; i++) step()
+  assert.equal(clicks(sent).length, 1, 'No closing click')
+})
+
+test('a door that stays closed for two seconds becomes a wall for this navigation: detour or failure', async t => {
+  const { world, navigator, step, sent } = await setup(t)
+  doorWall(world)
+  navigator.start({ x: 4, z: 0 }, 0)
+  await walkToDoor(world, step, sent)
+  for (let i = 0; i < 60 && ['planning', 'moving'].includes(world.navigation.status); i++) step()
+  assert.equal(world.navigation.status, 'error')
+  assert.match(world.navigation.message, /Kein Weg/)
+  assert.equal(clicks(sent).length, 1)
+  for (const y of [71, 72]) world.updateBlock({ x: 2, y, z: 4 }, hash('air'))
+  navigator.start({ x: 4, z: 0 }, 100000)
+  const before = clicks(sent).length
+  for (let i = 0; i < 1200 && ['planning', 'moving'].includes(world.navigation.status); i++) step()
+  assert.equal(world.navigation.status, 'arrived', world.navigation.message)
+  assert.equal(clicks(sent).length, before + 1, 'A new navigation tries the door again')
+  assert.ok(world.navigation.replans >= 1)
+})
+
+test('OPEN_DOORS defaults to on, accepts only on or off and reaches the world model', () => {
+  const { readConfig } = require('../dist/config.js')
+  const { BotController } = require('../dist/bot.js')
+  assert.equal(readConfig({ BEDROCK_HOST: 'localhost' }).openDoors, true)
+  assert.equal(readConfig({ BEDROCK_HOST: 'localhost', OPEN_DOORS: 'off' }).openDoors, false)
+  assert.throws(() => readConfig({ BEDROCK_HOST: 'localhost', OPEN_DOORS: 'yes' }), /OPEN_DOORS/)
+  const bot = new BotController(readConfig({ BEDROCK_HOST: 'localhost', OPEN_DOORS: 'off' }), () => { throw new Error('No connection allowed') })
+  assert.equal(bot.state.openDoors, false)
+  bot.stop()
+})

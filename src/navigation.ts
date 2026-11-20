@@ -29,6 +29,12 @@ const CORNER_RADIUS = .2
 const CAREFUL_SPEED = .06
 const CAREFUL_INPUT_LIMIT = .3
 const LOOKAHEAD = 8
+const DOOR_WAIT_MS = 2000
+// Doors are closed again only within this horizontal distance; beyond it they stay open.
+const DOOR_REACH = 4
+const DOOR_PLAYER_DISTANCE = 2
+const EMPTY_ITEM = { network_id: 0, count: 0, metadata: 0, has_stack_id: false, block_runtime_id: 0, extra: { has_nbt: false, can_place_on: [], can_destroy: [] } }
+const doorKey = (p: Position) => p.x + ':' + p.y + ':' + p.z
 // pass: straight, level and edge-free, keep walking speed; corner: level turn on safe ground; stop: brake to the waypoint.
 type WaypointKind = 'pass' | 'corner' | 'stop'
 // True once p has passed waypoint b on the line from a to b and is still within the same row of blocks.
@@ -64,11 +70,15 @@ export class Navigator {
   private stalledReplans = 0
   private previousWaypoint: Position | null = null
   private waitingSince: number | null = null
+  private doorPending: { key: string; door: Position; since: number } | null = null
+  // Doors this bot opened; each is closed once the bot has been inside and left the door block.
+  private openedDoors: Array<{ door: Position; entered: boolean }> = []
 
   constructor (private world: WorldState) {}
 
   reset () {
     this.world.navigation.path = []; this.planner = null
+    this.doorPending = null; this.openedDoors = []
     this.velocity = { x: 0, z: 0 }; this.neutral = false; this.inputActive = false; this.teleportPending = false; this.tick = 0n; this.tickBase = 0n; this.lastCorrection = -1n
     this.velocityY = -.0784; this.grounded = true; this.fallFrom = 0; this.settling = false
     this.jumping = false; this.jumpReleased = false
@@ -92,12 +102,13 @@ export class Navigator {
     this.session = this.world.worldSession
     this.startedAt = now; this.progressAt = now
     this.stalledReplans = 0; this.waitingSince = null
+    this.world.blockedDoors.clear()
     this.plan()
   }
 
   stop (message = 'Navigation gestoppt.') {
     const active = ['planning', 'moving'].includes(this.world.navigation.status)
-    this.world.navigation.path = []; this.planner = null
+    this.world.navigation.path = []; this.planner = null; this.doorPending = null
     if (active) {
       this.world.navigation.status = 'stopped'; this.world.navigation.message = message
       const p = this.world.position
@@ -124,7 +135,7 @@ export class Navigator {
   private replan (message: string) {
     // Only replans without waypoint progress count towards the limit; `replans` stays the total for the status view.
     this.world.navigation.replans++
-    this.waitingSince = null
+    this.waitingSince = null; this.doorPending = null
     if (++this.stalledReplans > MAX_STALLED_REPLANS) return this.fail('Navigation nach wiederholten Änderungen ohne Fortschritt abgebrochen: ' + message)
     log(`Neuplanung ${this.stalledReplans}/${MAX_STALLED_REPLANS} ohne Fortschritt (gesamt ${this.world.navigation.replans}), verbleibende Wegpunkte ${this.world.navigation.path.length}: ${message}`)
     this.world.navigation.message = message
@@ -172,11 +183,70 @@ export class Navigator {
 
   // A blocked or unknown next waypoint makes this one a stop, so the bot brakes before the replan instead of running into it.
   private waypointKind (previous: Position, waypoint: Position, next: Position | undefined): WaypointKind {
-    if (!next || !this.world.canStandAt(next.x, next.z, next.y) || Math.abs(previous.y - waypoint.y) > 1e-4 || Math.abs(next.y - waypoint.y) > 1e-4 || this.nearDrop(waypoint)) return 'stop'
+    if (!next || !this.world.canStandAt(next.x, next.z, next.y) || this.doorToOpen(waypoint, next) || Math.abs(previous.y - waypoint.y) > 1e-4 || Math.abs(next.y - waypoint.y) > 1e-4 || this.nearDrop(waypoint)) return 'stop'
     const ix = waypoint.x - previous.x; const iz = waypoint.z - previous.z; const inLength = Math.hypot(ix, iz)
     const ox = next.x - waypoint.x; const oz = next.z - waypoint.z; const outLength = Math.hypot(ox, oz)
     if (inLength < .01 || outLength < .01) return 'corner'
     return (ix * ox + iz * oz) / (inLength * outLength) >= .999 ? 'pass' : 'corner'
+  }
+
+  // The closed door or gate in either block of a step that has to be opened because the step is blocked without it.
+  private doorToOpen (from: Position, to: Position): Position | null {
+    const door = this.world.closedDoorAt(to.x, to.z, to.y) ?? this.world.closedDoorAt(from.x, from.z, from.y)
+    return door && this.world.terrain.transition(from, to.x, to.z) === null ? door : null
+  }
+
+  private clickDoor (send: Send, door: Position) {
+    const p = this.world.position!; const state = this.world.doorAt(door.x, door.y, door.z)
+    if (!state) return
+    // Click the door face that points towards the bot (2 north, 3 south, 4 west, 5 east).
+    const dx = p.x - door.x - .5; const dz = p.z - door.z - .5
+    const face = Math.abs(dx) > Math.abs(dz) ? (dx > 0 ? 5 : 4) : (dz > 0 ? 3 : 2)
+    const click = { x: face === 5 ? 1 : face === 4 ? 0 : .5, y: .5, z: face === 3 ? 1 : face === 2 ? 0 : .5 }
+    this.yaw = Math.atan2(-(door.x + .5 - p.x), door.z + .5 - p.z) * 180 / Math.PI
+    send('inventory_transaction', { transaction: { legacy: { legacy_request_id: 0 }, transaction_type: 'item_use', actions: [],
+      transaction_data: { action_type: 'click_block', trigger_type: 'player_input', block_position: { ...door }, face, hotbar_slot: 0, hand: 'main_hand',
+        held_item: EMPTY_ITEM, player_pos: { ...p }, click_pos: click, block_runtime_id: state.runtimeId, client_prediction: 'success', client_cooldown_state: 'off' } } })
+  }
+
+  // Clicks the door once, then waits for the server's block update; a door that stays closed is avoided by a replan.
+  private openDoor (send: Send, door: Position, now: number) {
+    if (!this.grounded) return
+    const key = doorKey(door)
+    if (this.doorPending?.key !== key) {
+      this.doorPending = { key, door, since: now }
+      this.velocity = { x: 0, z: 0 }; this.neutral = this.inputActive
+      log(`Öffne Tür/Tor bei (${door.x}, ${door.y}, ${door.z}).`)
+      return this.clickDoor(send, door)
+    }
+    this.progressAt = now
+    if (now - this.doorPending.since < DOOR_WAIT_MS) return
+    // Both halves of a door count as blocked for the rest of this navigation.
+    for (const dy of [-1, 0, 1]) if (this.world.doorAt(door.x, door.y + dy, door.z)) this.world.blockedDoors.add(doorKey({ ...door, y: door.y + dy }))
+    log(`Tür/Tor bei (${door.x}, ${door.y}, ${door.z}) nach ${DOOR_WAIT_MS / 1000} s nicht geöffnet; gilt für diese Navigation als Wand.`)
+    this.replan('Tür oder Tor ließ sich nicht öffnen; Weg wird ohne sie neu geplant.')
+  }
+
+  // Closes doors this bot opened once it has passed through, unless another player is close to the door.
+  private closeDoors (send: Send) {
+    const p = this.world.position
+    if (!this.openedDoors.length) return
+    if (!p || this.world.status !== 'spawned' || this.world.worldSession !== this.session) { this.openedDoors = []; return }
+    this.openedDoors = this.openedDoors.filter(entry => {
+      const { door } = entry; const cx = door.x + .5; const cz = door.z + .5
+      const distance = Math.hypot(p.x - cx, p.z - cz)
+      // The player box (half width .3) overlaps the door block.
+      if (Math.abs(p.x - cx) < .8 && Math.abs(p.z - cz) < .8) { entry.entered = true; return true }
+      if (!entry.entered) return distance <= DOOR_REACH
+      if (!this.world.doorAt(door.x, door.y, door.z)?.open) return false
+      if (distance > DOOR_REACH) { log(`Tür/Tor bei (${door.x}, ${door.y}, ${door.z}) außer Reichweite; bleibt offen.`); return false }
+      if ([...this.world.players.values()].some(other => Math.hypot(other.position.x - cx, other.position.z - cz) <= DOOR_PLAYER_DISTANCE && Math.abs(other.position.y - EYE_HEIGHT - door.y) <= 3)) {
+        log(`Spieler nahe Tür/Tor bei (${door.x}, ${door.y}, ${door.z}); bleibt offen.`); return false
+      }
+      log(`Schließe Tür/Tor bei (${door.x}, ${door.y}, ${door.z}).`)
+      this.clickDoor(send, door)
+      return false
+    })
   }
 
   // True when any of the eight columns around p is a drop, a hole or unknown at p's feet height.
@@ -237,6 +307,7 @@ export class Navigator {
       } else this.sendInput(send, this.world.position, { x: 0, y: -.0784, z: 0 }, 0, true)
       return
     }
+    this.closeDoors(send)
     const nav = this.world.navigation; const p = this.world.position
     if (!['planning', 'moving'].includes(nav.status) || !p) return
     if (this.world.worldSession !== this.session) return this.fail('Weltsitzung geändert; Navigation gestoppt.')
@@ -268,6 +339,13 @@ export class Navigator {
         return this.replan('Weltdaten am Weg nach Wartezeit weiterhin nicht verfügbar.')
       }
       if (this.waitingSince !== null) { this.waitingSince = null; this.progressAt = now; this.bestDistance = Infinity }
+      const door = this.doorToOpen(this.previousWaypoint!, waypoint)
+      if (door) return this.openDoor(send, door, now)
+      if (this.doorPending) {
+        log(`Tür/Tor bei (${this.doorPending.door.x}, ${this.doorPending.door.y}, ${this.doorPending.door.z}) ist offen.`)
+        this.openedDoors.push({ door: this.doorPending.door, entered: false })
+        this.doorPending = null; this.progressAt = now; this.bestDistance = Infinity
+      }
       if (!this.world.canStandAt(waypoint.x, waypoint.z, waypoint.y)) return this.replan('Weg blockiert oder Weltdaten nicht mehr verfügbar.')
       const kind = this.waypointKind(this.previousWaypoint!, waypoint, path[1])
       const d = distance(p, waypoint)
@@ -286,7 +364,14 @@ export class Navigator {
     const d = distance(p, waypoint)
     const remaining = d + Math.abs(p.y - EYE_HEIGHT - waypoint.y)
     if (remaining < this.bestDistance - .025) { this.bestDistance = remaining; this.progressAt = now }
-    if (now - this.progressAt > 5000) return this.fail('Kein ausreichender Fortschritt; Navigation gestoppt.')
+    if (now - this.progressAt > 5000) {
+      const previous = this.previousWaypoint!; const next = path[1]
+      log(`Kein Fortschritt: Füße (${fixed(p.x)}, ${fixed(p.y - EYE_HEIGHT)}, ${fixed(p.z)}), am Boden ${this.grounded}, ` +
+        `Geschwindigkeit ${fixed(Math.hypot(this.velocity.x, this.velocity.z))}, vorheriger Wegpunkt (${fixed(previous.x)}, ${fixed(previous.y)}, ${fixed(previous.z)}), ` +
+        `Wegpunkt (${fixed(waypoint.x)}, ${fixed(waypoint.y)}, ${fixed(waypoint.z)}) Art ${this.waypointKind(previous, waypoint, next)} Abstand ${fixed(d)}, ` +
+        `nächster ${next ? `(${fixed(next.x)}, ${fixed(next.y)}, ${fixed(next.z)})` : 'keiner'}, verbleibend ${path.length}`)
+      return this.fail('Kein ausreichender Fortschritt; Navigation gestoppt.')
+    }
     // Steps, jumps, drops and segments next to an edge keep the slow, careful approach; only safe level segments use walking speed.
     const previous = this.previousWaypoint!
     const careful = !this.grounded || Math.abs(previous.y - waypoint.y) > 1e-4 || this.nearDrop(previous) || this.nearDrop(waypoint)

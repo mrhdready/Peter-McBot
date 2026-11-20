@@ -26,7 +26,27 @@ port.on('message', async message => {
           else if (/(?:_slab|_stairs)$/.test(block.name)) walkFlags[id] = 2
         }
       }
-      port.postMessage({ type: 'ready', blocks, air: registry.blocksByName.air.defaultState, runtimePairs, walkFlags, collisionIds, collisionShapes: registry.blockCollisionShapes.shapes }, [runtimePairs.buffer, walkFlags.buffer, collisionIds.buffer])
+      // Hand-openable doors (all but iron) and fence gates: pair each closed state with the open state that has the same other properties.
+      const doorToggle = new Int32Array(registry.blockStates.length).fill(-1)
+      const doorOpen = new Uint8Array(registry.blockStates.length)
+      for (const block of Object.values(registry.blocksByName) as any[]) {
+        if (!/(?:^|_)door$|fence_gate$/.test(block.name) || block.name === 'iron_door') continue
+        const pairs = new Map<string, [number, number]>()
+        for (let id = block.minStateId; id <= block.maxStateId; id++) {
+          const states = registry.blockStates[id]?.states
+          if (!states || !('open_bit' in states)) continue
+          const open = Number(states.open_bit?.value ?? states.open_bit) === 1
+          const key = JSON.stringify(Object.entries(states).filter(([name]) => name !== 'open_bit').sort(([a], [b]) => a < b ? -1 : 1))
+          const pair = pairs.get(key) ?? [-1, -1]
+          pair[open ? 1 : 0] = id; pairs.set(key, pair)
+        }
+        for (const [closed, open] of pairs.values()) {
+          if (closed < 0 || open < 0) continue
+          doorToggle[closed] = open; doorToggle[open] = closed; doorOpen[open] = 1
+        }
+      }
+      port.postMessage({ type: 'ready', blocks, air: registry.blocksByName.air.defaultState, runtimePairs, walkFlags, collisionIds, collisionShapes: registry.blockCollisionShapes.shapes, doorToggle, doorOpen },
+        [runtimePairs.buffer, walkFlags.buffer, collisionIds.buffer, doorToggle.buffer, doorOpen.buffer])
       return
     }
     const payload = Buffer.from(message.payload)

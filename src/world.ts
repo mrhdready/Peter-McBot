@@ -43,7 +43,16 @@ export class ChunkWorld {
   private walkFlags = new Uint8Array()
   private collisionIds = new Int32Array()
   private collisionShapes: Record<number, Box[]> = {}
+  private doorToggle = new Int32Array()
+  private doorOpen = new Uint8Array()
+  private runtimeIds = new Map<number, number>()
   readonly terrain = new Terrain((x, y, z) => this.collisionAt(x, y, z))
+  // When true, routes may pass closed hand-openable doors and fence gates; navigation opens them on the way.
+  openDoors = true
+  // Doors that did not open during the current navigation ("x:y:z"); planning treats them as closed walls.
+  readonly blockedDoors = new Set<string>()
+  // Terrain for route planning: closed openable doors count as open unless disabled or blocked.
+  readonly planningTerrain = new Terrain((x, y, z) => this.collisionAt(x, y, z, this.openDoors))
   private mapCache: { key: string; data: SurfaceMap } | null = null
   private mapping = false
   private runtime = new Map<number, number>()
@@ -71,6 +80,10 @@ export class ChunkWorld {
     this.walkFlags = new Uint8Array()
     this.collisionIds = new Int32Array()
     this.collisionShapes = {}
+    this.doorToggle = new Int32Array()
+    this.doorOpen = new Uint8Array()
+    this.runtimeIds.clear()
+    this.blockedDoors.clear()
     this.mapCache = null
     this.worldDimension = null
     this.center = null
@@ -93,12 +106,14 @@ export class ChunkWorld {
         this.walkFlags = message.walkFlags
         this.collisionIds = message.collisionIds
         this.collisionShapes = message.collisionShapes
+        this.doorToggle = message.doorToggle
+        this.doorOpen = message.doorOpen
         for (const [name, block] of Object.entries(this.blocks!)) {
           for (let id = block.min; id <= block.max; id++) this.stateNames[id] = name
         }
         this.air = message.air
         const pairs = message.runtimePairs as Uint32Array
-        for (let i = 0; i < pairs.length; i += 2) this.runtime.set(pairs[i], pairs[i + 1])
+        for (let i = 0; i < pairs.length; i += 2) { this.runtime.set(pairs[i], pairs[i + 1]); this.runtimeIds.set(pairs[i + 1], pairs[i]) }
       } else {
         this.jobs.delete(message.id)
         for (const column of this.chunks.values()) for (const [y, request] of column.requests) {
@@ -327,14 +342,42 @@ export class ChunkWorld {
     return column ? this.surfaceCells(column) : null
   }
 
-  private collisionAt (x: number, y: number, z: number): CollisionCell | null {
+  private stateAt (x: number, y: number, z: number, layer = 0): number | null {
+    if (!this.blocks) return null
+    const section = this.chunks.get(Math.floor(x / 16) + ':' + Math.floor(z / 16))?.sections.get(Math.floor(y / 16))
+    if (!section) return null
+    return section.data?.[layer * 4096 + ((x & 15) << 8) + ((y & 15) << 4) + (z & 15)] ?? this.air
+  }
+
+  // A hand-openable door or fence gate in block (x, y, z): whether it is open and its network runtime ID for interaction.
+  doorAt (x: number, y: number, z: number): { open: boolean; runtimeId: number } | null {
+    const id = this.stateAt(x, y, z)
+    if (id === null || !(this.doorToggle[id] >= 0)) return null
+    const runtimeId = this.runtimeIds.get(id)
+    return runtimeId === undefined ? null : { open: this.doorOpen[id] === 1, runtimeId }
+  }
+
+  // The closed, openable door or gate block a player standing at (x, feetY, z) would occupy (feet first, then head),
+  // or null. Disabled door opening and doors blocked for this navigation count as none.
+  closedDoorAt (x: number, z: number, feetY: number): Position | null {
+    if (!this.openDoors) return null
+    const bx = Math.floor(x); const bz = Math.floor(z); const foot = Math.floor(feetY + 1e-4)
+    for (const by of [foot, foot + 1]) {
+      const door = this.doorAt(bx, by, bz)
+      if (door && !door.open && !this.blockedDoors.has(bx + ':' + by + ':' + bz)) return { x: bx, y: by, z: bz }
+    }
+    return null
+  }
+
+  private collisionAt (x: number, y: number, z: number, assumeOpen = false): CollisionCell | null {
     if (!this.blocks) return null
     const section = this.chunks.get(Math.floor(x / 16) + ':' + Math.floor(z / 16))?.sections.get(Math.floor(y / 16))
     if (!section) return null
     const index = ((x & 15) << 8) + ((y & 15) << 4) + (z & 15)
     const boxes: Box[] = []; let support = false
     for (let layer = 0; layer < 2; layer++) {
-      const id = section.data?.[layer * 4096 + index] ?? this.air
+      let id = section.data?.[layer * 4096 + index] ?? this.air
+      if (assumeOpen && layer === 0 && this.doorToggle[id] >= 0 && !this.doorOpen[id] && !this.blockedDoors.has(x + ':' + y + ':' + z)) id = this.doorToggle[id]
       const shape = this.collisionIds[id]
       if (shape === undefined || shape < 0 || !this.collisionShapes[shape]) return null
       boxes.push(...this.collisionShapes[shape])

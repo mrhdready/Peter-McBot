@@ -49,7 +49,10 @@ export class BotController {
     private createClient: ClientFactory,
     private publish: () => void = () => {},
     private now: () => number = Date.now
-  ) { this.state = new WorldState(config.radius, config.version); this.navigator = new Navigator(this.state) }
+  ) {
+    this.state = new WorldState(config.radius, config.version); this.state.openDoors = config.openDoors !== false
+    this.navigator = new Navigator(this.state)
+  }
 
   enqueue (command: Command) {
     if (this.stopped) return false

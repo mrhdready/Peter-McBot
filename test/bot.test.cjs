@@ -188,6 +188,7 @@ test('navigation starts on the central tick; stop cancels queued starts and deat
   client.emit('spawn')
   const { Terrain } = require('../dist/terrain.js')
   bot.state.terrain = new Terrain((x,y,z) => Math.abs(x) < 10 && Math.abs(z) < 10 ? { boxes: y === 70 ? [[0,0,0,1,1,1]] : [], support: y === 70 } : null)
+  bot.state.planningTerrain = bot.state.terrain
   bot.state.chunks.set('0:0', { x:0, z:0, sections:new Map(), attempts:new Map(), requests:new Map() })
   assert.equal(bot.enqueue({ type: 'navigate', x: 3, z: 0 }), true)
   assert.equal(bot.state.navigation.status, 'idle')

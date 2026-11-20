@@ -3,7 +3,7 @@ import { isIP } from 'node:net'
 export type Config = {
   host: string; port: number; version: string; transport: 'nethernet' | 'raknet';
   username: string; radius: number; webHost: string; webPort: number; iceHost?: string; mapWorldId: string
-  chatCommands: boolean
+  chatCommands: boolean; openDoors: boolean
 }
 
 export function readConfig (env: NodeJS.ProcessEnv = process.env): Config {
@@ -25,8 +25,10 @@ export function readConfig (env: NodeJS.ProcessEnv = process.env): Config {
   if (!/^[a-zA-Z0-9_ ]{1,16}$/.test(username)) throw new Error('Invalid BOT_NAME (1..16 letters, digits, spaces or underscores)')
   const chatCommands = env.CHAT_COMMANDS?.trim() || 'on'
   if (chatCommands !== 'on' && chatCommands !== 'off') throw new Error('Invalid CHAT_COMMANDS (on or off)')
+  const openDoors = env.OPEN_DOORS?.trim() || 'on'
+  if (openDoors !== 'on' && openDoors !== 'off') throw new Error('Invalid OPEN_DOORS (on or off)')
   return {
-    chatCommands: chatCommands === 'on',
+    chatCommands: chatCommands === 'on', openDoors: openDoors === 'on',
     host, port: integer('BEDROCK_PORT', 19132, 1, 65535),
     version: env.BEDROCK_VERSION || '1.26.60', transport, username, iceHost, mapWorldId,
     radius: integer('CHUNK_RADIUS', 4, 4, 6),

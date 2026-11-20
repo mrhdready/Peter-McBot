@@ -96,7 +96,8 @@ function navigationFixture () {
   const {terrain,set}=fixture()
   const {Navigator,EYE_HEIGHT}=require('../dist/navigation.js')
   const world={terrain,status:'spawned',position:{x:.5,y:EYE_HEIGHT,z:.5},navigation:{},tick:0,worldSession:1,worldRevision:1,
-    chunks:new Map([['0:0',{}],['-1:0',{}],['0:-1',{}]]),setCenter:()=>{},canStandAt:(x,z,y)=>terrain.canStandAt(x,z,y)}
+    chunks:new Map([['0:0',{}],['-1:0',{}],['0:-1',{}]]),setCenter:()=>{},canStandAt:(x,z,y)=>terrain.canStandAt(x,z,y),
+    planningTerrain:terrain,closedDoorAt:()=>null,doorAt:()=>null,blockedDoors:new Set(),players:new Map()}
   const navigator=new Navigator(world);navigator.reset()
   const sent=[]
   const step=()=>{world.tick++;navigator.step((name,params)=>sent.push({name,params}),world.tick*50)}

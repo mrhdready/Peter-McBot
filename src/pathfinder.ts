@@ -8,6 +8,8 @@ export const COST_STEP = 1.5
 export const COST_DROP = 4
 export const COST_JUMP = 5
 export const COST_EDGE = 2
+// Passing a closed door or fence gate means stopping to open it; an open detour of up to three extra blocks is preferred.
+export const COST_DOOR = 3
 export const MAX_SEARCH_NODES = 16384
 const NEIGHBOURS = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const
 export type Target = { x: number; z: number }
@@ -83,8 +85,8 @@ export class RoutePlanner {
       for (const [dx, dz] of NEIGHBOURS) {
         const x = node.x + dx; const z = node.z + dz
         const from = { x: node.x + .5, y: node.y, z: node.z + .5 }
-        const walked = this.world.terrain.transition(from, x + .5, z + .5)
-        const endpoint = walked ?? this.world.terrain.jumpTransition(from, x + .5, z + .5)
+        const walked = this.world.planningTerrain.transition(from, x + .5, z + .5)
+        const endpoint = walked ?? this.world.planningTerrain.jumpTransition(from, x + .5, z + .5)
         if (!endpoint) continue
         const next = { x, y: Math.round(endpoint.y * 2) / 2, z }; const nextId = key(next)
         const cost = node.g + this.stepCost(node.y, next, walked === null)
@@ -100,7 +102,8 @@ export class RoutePlanner {
   private stepCost (fromY: number, next: Feet, jumped: boolean) {
     const rise = next.y - fromY
     let cost = jumped ? COST_JUMP : rise < -STEP_HEIGHT ? COST_DROP : Math.abs(rise) > 1e-4 ? COST_STEP : COST_FLAT
-    if (NEIGHBOURS.some(([dx, dz]) => this.world.terrain.dropHazard(next.x + dx, next.z + dz, next.y))) cost += COST_EDGE
+    if (NEIGHBOURS.some(([dx, dz]) => this.world.planningTerrain.dropHazard(next.x + dx, next.z + dz, next.y))) cost += COST_EDGE
+    if (this.world.closedDoorAt(next.x + .5, next.z + .5, next.y)) cost += COST_DOOR
     return cost
   }
 }

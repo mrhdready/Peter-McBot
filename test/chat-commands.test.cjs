@@ -30,6 +30,7 @@ function setup (t) {
   client.emit('spawn')
   // Flat, walkable floor at y=70 within |x|,|z| < 10.
   bot.state.terrain = new Terrain((x, y, z) => Math.abs(x) < 10 && Math.abs(z) < 10 ? { boxes: y === 70 ? [[0, 0, 0, 1, 1, 1]] : [], support: y === 70 } : null)
+  bot.state.planningTerrain = bot.state.terrain
   bot.state.chunks.set('0:0', { x: 0, z: 0, sections: new Map(), attempts: new Map(), requests: new Map() })
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-bot-chat-'))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
