@@ -23,10 +23,58 @@ port.on('message', async message => {
           collisionIds[id] = Array.isArray(ids) ? ids[id - block.minStateId] : ids
           if (boxes.length === 0) walkFlags[id] = 1
           else if (boxes.length === 1 && boxes[0].every((v: number, i: number) => v === (i < 3 ? 0 : 1))) walkFlags[id] = 2
-          else if (/(?:_slab|_stairs)$/.test(block.name)) walkFlags[id] = 2
+          // Farmland and paths are 15/16 high; walking on them is safe (only falling tramples farmland).
+          else if (/(?:_slab|_stairs)$|^(?:farmland|grass_path)$/.test(block.name)) walkFlags[id] = 2
         }
       }
-      port.postMessage({ type: 'ready', blocks, air: registry.blocksByName.air.defaultState, runtimePairs, walkFlags, collisionIds, collisionShapes: registry.blockCollisionShapes.shapes }, [runtimePairs.buffer, walkFlags.buffer, collisionIds.buffer])
+      // minecraft-data gives every door state the same west-side panel. Derive the vanilla panel from facing, open and hinge instead:
+      // closed it lies on the face opposite its facing; open it swings to the side given by the hinge.
+      const shapes: Record<number, number[][]> = { ...registry.blockCollisionShapes.shapes }
+      const T = 3 / 16
+      const panels: Record<string, number[][]> = {
+        east: [[0, 0, 0, T, 1, 1]], west: [[1 - T, 0, 0, 1, 1, 1]], south: [[0, 0, 0, 1, 1, T]], north: [[0, 0, 1 - T, 1, 1, 1]]
+      }
+      const swing: Record<string, [string, string]> = { east: ['south', 'north'], south: ['west', 'east'], west: ['north', 'south'], north: ['east', 'west'] }
+      const panelIds: Record<string, number> = {}
+      let nextShape = Math.max(0, ...Object.keys(shapes).map(Number)) + 1
+      for (const side of Object.keys(panels)) { panelIds[side] = nextShape; shapes[nextShape++] = panels[side] }
+      const stateValue = (states: any, name: string) => states?.[name]?.value ?? states?.[name]
+      // 1 lower, 2 upper door half. Bedrock keeps facing and open state on the lower half; the world model resolves upper halves to it.
+      const doorHalf = new Uint8Array(registry.blockStates.length)
+      for (const block of Object.values(registry.blocksByName) as any[]) {
+        if (!/(?:^|_)door$/.test(block.name)) continue
+        for (let id = block.minStateId; id <= block.maxStateId; id++) {
+          const states = registry.blockStates[id]?.states
+          doorHalf[id] = Number(stateValue(states, 'upper_block_bit')) === 1 ? 2 : 1
+          // Door cardinal_direction keeps the legacy door direction (0 = east) under the generic names (0 = south),
+          // so it is a quarter turn off: a live door reported as "south" blocks walking along X like a vanilla east-facing door.
+          const facing = ({ south: 'east', west: 'south', north: 'west', east: 'north' } as Record<string, string>)[stateValue(states, 'minecraft:cardinal_direction')]
+          if (!facing) continue
+          const side = Number(stateValue(states, 'open_bit')) === 1 ? swing[facing][Number(stateValue(states, 'door_hinge_bit')) === 1 ? 1 : 0] : facing
+          collisionIds[id] = panelIds[side]; walkFlags[id] = 0
+        }
+      }
+      // Hand-openable doors (all but iron) and fence gates: pair each closed state with the open state that has the same other properties.
+      const doorToggle = new Int32Array(registry.blockStates.length).fill(-1)
+      const doorOpen = new Uint8Array(registry.blockStates.length)
+      for (const block of Object.values(registry.blocksByName) as any[]) {
+        if (!/(?:^|_)door$|fence_gate$/.test(block.name) || block.name === 'iron_door') continue
+        const pairs = new Map<string, [number, number]>()
+        for (let id = block.minStateId; id <= block.maxStateId; id++) {
+          const states = registry.blockStates[id]?.states
+          if (!states || !('open_bit' in states)) continue
+          const open = Number(states.open_bit?.value ?? states.open_bit) === 1
+          const key = JSON.stringify(Object.entries(states).filter(([name]) => name !== 'open_bit').sort(([a], [b]) => a < b ? -1 : 1))
+          const pair = pairs.get(key) ?? [-1, -1]
+          pair[open ? 1 : 0] = id; pairs.set(key, pair)
+        }
+        for (const [closed, open] of pairs.values()) {
+          if (closed < 0 || open < 0) continue
+          doorToggle[closed] = open; doorToggle[open] = closed; doorOpen[open] = 1
+        }
+      }
+      port.postMessage({ type: 'ready', blocks, air: registry.blocksByName.air.defaultState, runtimePairs, walkFlags, collisionIds, collisionShapes: shapes, doorToggle, doorOpen, doorHalf },
+        [runtimePairs.buffer, walkFlags.buffer, collisionIds.buffer, doorToggle.buffer, doorOpen.buffer, doorHalf.buffer])
       return
     }
     const payload = Buffer.from(message.payload)

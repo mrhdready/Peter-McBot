@@ -42,6 +42,8 @@ test('HTTP queues commands, validates requests, and streams state using SSE', as
   assert.equal((await fetch(base + '/api/map')).status, 409)
   assert.deepEqual(await fetch(base + '/api/block-ids').then(r => r.json()), { blockIds: [] })
   assert.equal((await fetch(base + '/api/status').then(r => r.json())).status, 'disconnected')
+  assert.deepEqual(await fetch(base + '/api/chat').then(r => r.json()), { revision: 0, lines: [] })
+  assert.deepEqual(await fetch(base + '/api/inventory').then(r => r.json()), { revision: 0, known: false, items: [] })
   assert.equal((await fetch(base + '/api/blocks?block=stone')).status, 409)
   assert.equal((await fetch(base + '/api/blocks?block=%3Cbad%3E')).status, 400)
   assert.equal((await fetch(base + '/api/blocks?block=stone&limit=101')).status, 400)
@@ -59,8 +61,49 @@ test('HTTP queues commands, validates requests, and streams state using SSE', as
   const reader = events.body.getReader()
   const data = new TextDecoder().decode((await reader.read()).value)
   assert.match(data, /"status":"reconnecting"/)
+  assert.match(data, /"chatRevision":0/)
   await reader.cancel()
   assert.equal((await fetch(base + '/missing')).status, 404)
+})
+
+test('POST /api/farm validates the request, switches farming and the snapshot carries the farm status', async t => {
+  const { EventEmitter } = require('node:events')
+  let time = 1000
+  const client = Object.assign(new EventEmitter(), { entityId: 10n, queue () {}, close () {} })
+  const bot = new BotController(readConfig({ BEDROCK_HOST: 'localhost' }), () => client, () => {}, () => time)
+  const web = createWebServer(bot)
+  t.after(() => { bot.stop(); web.close() })
+  web.server.listen(0, '127.0.0.1')
+  await once(web.server, 'listening')
+  const base = `http://127.0.0.1:${web.server.address().port}`
+  const post = (body, headers = { 'Content-Type': 'application/json' }) => fetch(base + '/api/farm', { method: 'POST', headers, body })
+  assert.equal((await post('{"action":"on"}', {})).status, 415)
+  assert.equal((await post('{"action":"on"}', { 'Content-Type': 'application/json', Origin: 'https://foreign.example' })).status, 403)
+  assert.equal((await post('{"action":"maybe"}')).status, 400)
+  assert.equal((await post('{"action":"on","place":5}')).status, 400)
+  assert.equal((await post('[]')).status, 400)
+  assert.equal((await post(JSON.stringify({ action: 'on', place: 'x'.repeat(200) }))).status, 413)
+  assert.equal((await post('{"action":"on"}')).status, 409, 'Farming needs a spawned bot')
+  bot.enqueue('connect'); bot.step()
+  client.emit('start_game', { player_position: { x: .5, y: 72.62, z: .5 }, dimension: 0 })
+  client.emit('spawn')
+  // Without the place store a place id cannot be resolved.
+  assert.equal((await post('{"action":"on","place":"0f0f0f0f-0000-0000-0000-000000000000"}')).status, 409)
+  const on = await post('{"action":"on","place":null}')
+  assert.equal(on.status, 202)
+  assert.equal((await on.json()).farm.enabled, true)
+  assert.deepEqual(bot.farm.status().anchor, { x: .5, z: .5, label: 'Bot-Position' })
+  assert.equal((await fetch(base + '/api/status').then(r => r.json())).status, 'spawned')
+  const abort = new AbortController()
+  t.after(() => abort.abort())
+  const reader = (await fetch(base + '/api/events', { signal: abort.signal })).body.getReader()
+  const snapshot = JSON.parse(new TextDecoder().decode((await reader.read()).value).replace(/^data: /, ''))
+  await reader.cancel()
+  assert.equal(snapshot.farm.enabled, true)
+  assert.equal(snapshot.farm.radius, 24)
+  const off = await post('{"action":"off"}')
+  assert.equal(off.status, 202)
+  assert.equal((await off.json()).farm.enabled, false)
 })
 
 test('HTTP block search returns bounded nearest world coordinates from known data', { timeout: 10000 }, async t => {
@@ -114,12 +157,10 @@ test('map markers select underground hits, survive map refresh and discard obsol
   await once(web.server, 'listening')
   const page = await fetch(`http://127.0.0.1:${web.server.address().port}`).then(r => r.text())
   const elements = new Map()
-  const arcs = []
   const rectangles = []
   const strokes = []; let points = []
   const context = new Proxy({}, { get (target,key) {
     if(key==='createImageData')return (width,height)=>({width,height,data:new Uint8ClampedArray(width*height*4)})
-    if(key==='arc')return (...args)=>arcs.push({args,color:context.fillStyle})
     if(key==='strokeRect')return (...args)=>rectangles.push({args,color:context.strokeStyle})
     if(key==='beginPath')return ()=>{points=[]}
     if(key==='moveTo'||key==='lineTo')return (...args)=>points.push(args)
@@ -149,6 +190,8 @@ test('map markers select underground hits, survive map refresh and discard obsol
     { x: -1, y: 5, z: -1, distance: 65 }, { x: -1, y: -6, z: -1, distance: 76 }, { x: 4, y: 7, z: 5, distance: 64 }
   ], coverage, outcome: 'found' }
   let events, pendingSearch, pendingPreview
+  let chat = { revision: 0, lines: [] }
+  let inventory = { revision: 0, known: false, items: [] }
   const requests = []
   let now = 10000
   class Clock extends Date { static now () { return now } }
@@ -166,7 +209,7 @@ test('map markers select underground hits, survive map refresh and discard obsol
         return {ok:true,json:async()=>({target,origin:{...state.position},session:state.coverage.session,revision:state.worldRevision??0,
           path:[{x:state.position.x,y:68,z:state.position.z},{x:target.x+.5,y:68,z:target.z+.5}]})}
       }
-      const body = url === '/api/map' ? map : url === '/api/block-ids' ? { blockIds: ['minecraft:diamond_ore'] } : result
+      const body = url === '/api/map' ? map : url === '/api/chat' ? chat : url === '/api/inventory' ? inventory : url === '/api/block-ids' ? { blockIds: ['minecraft:diamond_ore'] } : result
       return { ok: true, json: async () => body }
     }
   })
@@ -197,8 +240,69 @@ test('map markers select underground hits, survive map refresh and discard obsol
   byId('map').onpointermove({ clientX: 24, clientY: 8 })
   assert.equal(byId('map-pin-overlay').hidden, false)
   assert.equal(byId('map-pin-overlay').textContent, playerPin.textContent + ' Alex\nX: 8.0, Y: 65.6, Z: -8.0\n11 Blöcke vom Bot entfernt')
+  // The player list shows everyone online: players in range by distance first, then the rest alphabetically.
+  assert.equal(byId('players-heading').textContent, 'Spieler (0)')
+  assert.equal(byId('player-empty').hidden, false)
+  state.roster = [{ name: 'zoe', position: null }, { name: 'Alex', position: { x: 8, y: 65.62, z: -8 } }, { name: 'Bob', position: null }, { name: 'Cleo', position: { x: 3, y: 64, z: 4 } }]
+  await publish()
+  assert.equal(byId('players-heading').textContent, 'Spieler (4)')
+  assert.equal(byId('player-empty').hidden, true)
+  const playerRows = byId('player-list').children
+  assert.deepEqual(playerRows.map(row => row.children[0].textContent.split(' ').slice(1).join(' ')), [
+    'Cleo – 5 Blöcke entfernt', 'Alex – 11 Blöcke entfernt', 'Bob – nicht in Reichweite', 'zoe – nicht in Reichweite'
+  ])
+  assert.equal(playerRows[1].children[0].textContent.split(' ')[0], playerPin.textContent, 'The list uses the same animal as the map')
+  assert.equal(playerRows[2].className, 'player-far')
+  // A new chat revision refetches the read-only log: animal per player, whisper marker, the bot's replies, grey connection marks.
+  assert.equal(byId('chat-empty').hidden, false)
+  chat = { revision: 4, lines: [
+    { at: 0, kind: 'event', name: '', text: 'Verbunden' },
+    { at: 0, kind: 'chat', name: 'Alex', text: 'hi' },
+    { at: 0, kind: 'whisper', name: 'Bea', text: 'psst' },
+    { at: 0, kind: 'bot', name: 'Peter Bot', text: 'Hallo Alex!' }
+  ] }
+  state.chatRevision = 4
+  await publish()
+  const chatRows = byId('chat-log').children
+  assert.deepEqual(chatRows.map(row => row.className), ['chat-line chat-event', 'chat-line chat-chat', 'chat-line chat-whisper', 'chat-line chat-bot'])
+  assert.match(chatRows[0].textContent, / · Verbunden$/)
+  assert.equal(chatRows[1].children[1].textContent, playerPin.textContent + ' Alex: ')
+  assert.equal(chatRows[1].children[2].textContent, 'hi')
+  assert.match(chatRows[2].children[1].textContent, / Bea flüstert: $/)
+  assert.equal(chatRows[3].children[1].textContent, '🤖 Peter Bot: ')
+  assert.equal(byId('chat-empty').hidden, true)
+  const chatFetches = requests.filter(request => request.url === '/api/chat').length
+  await publish()
+  assert.equal(requests.filter(request => request.url === '/api/chat').length, chatFetches, 'An unchanged revision does not refetch')
+  // A new inventory revision refetches the read-only item totals.
+  assert.equal(byId('inventory-empty').textContent, 'Inventar unbekannt (nicht verbunden).')
+  inventory = { revision: 3, known: true, items: [{ name: 'minecraft:dirt', count: 12 }, { name: 'minecraft:torch', count: 3 }] }
+  state.inventoryRevision = 3
+  await publish()
+  assert.equal(byId('inventory-heading').textContent, 'Inventar (15)')
+  assert.deepEqual(byId('inventory-list').children.map(row => row.textContent), ['dirt ×12', 'torch ×3'])
+  assert.equal(byId('inventory-empty').hidden, true)
+  // The farm panel mirrors the farming status; the switch posts on (with the chosen anchor) or off.
+  state.farm = { enabled: true, once: false, anchor: { x: 0, z: 0, label: 'Bot-Position' }, radius: 24, activity: 'Erntet', pausedUntil: null, lastSummary: '2 Weizen geerntet, 2 neu gepflanzt.' }
+  await publish()
+  assert.equal(byId('farm-toggle').textContent, 'Farming beenden')
+  assert.equal(byId('farm-status').textContent, 'Erntet – Anker: Bot-Position, Radius 24. Zuletzt: 2 Weizen geerntet, 2 neu gepflanzt.')
+  assert.equal(byId('farm-anchor').disabled, true)
+  await byId('farm-toggle').onclick()
+  assert.equal(requests.at(-1).url, '/api/farm')
+  assert.deepEqual(JSON.parse(requests.at(-1).options.body), { action: 'off' })
+  state.farm = { ...state.farm, enabled: false, anchor: null }
+  await publish()
+  assert.equal(byId('farm-toggle').textContent, 'Farming starten')
+  assert.equal(byId('farm-status').textContent, 'Farming ist aus. Zuletzt: 2 Weizen geerntet, 2 neu gepflanzt.')
+  assert.equal(byId('farm-anchor').disabled, false)
+  await byId('farm-toggle').onclick()
+  assert.deepEqual(JSON.parse(requests.at(-1).options.body), { action: 'on', place: null })
+  delete state.farm
+  state.roster = []
   state.players = []
   await publish()
+  assert.equal(byId('player-empty').textContent, 'Keine anderen Spieler online.')
   assert.ok(!byId('map-pins').children.some(pin => pin.className.includes('pin-player')), 'A player out of range disappears')
   assert.equal(byId('map-pin-overlay').hidden, true, 'Its overlay disappears with it')
   state.position={x:-.5,y:69.62,z:.5}
@@ -261,7 +365,14 @@ test('map markers select underground hits, survive map refresh and discard obsol
   assert.equal(choices.length, 2, 'Both vertical hits at one X/Z remain selectable')
   choices[1].onclick()
   assert.match(byId('map-hit-info').textContent, /Y: -6/)
-  assert.ok(arcs.some(({ args }) => args[0] === 15.5 && args[1] === 15.5 && args[2] === 1.1), 'Marker uses world X/Z at the centre of the cell')
+  const hitPins = () => byId('map-pins').children.filter(pin => pin.textContent === '⛏️')
+  assert.equal(hitPins().length, 2, 'One hit pin per X/Z column')
+  const columnPin = hitPins().find(pin => pin.style.left === (15.5 / 32 * 100) + '%')
+  assert.equal(columnPin.style.top, (15.5 / 32 * 100) + '%', 'Hit pin uses world X/Z at the centre of the cell')
+  assert.equal(columnPin.className, 'pin pin-center pin-hit selected')
+  assert.equal(hitPins().filter(pin => pin.className.includes('selected')).length, 1)
+  canvas.onpointermove({ clientX: 15.5, clientY: 15.5 })
+  assert.match(byId('map-pin-overlay').textContent, /^⛏️ minecraft:diamond_ore \(2 Treffer\)\nX: -1, Z: -1\nY: -6, 5\n1 Blöcke vom Bot entfernt\n/)
   now += 6000
   await publish()
   assert.match(byId('map-hit-info').textContent, /Y: -6/, 'Map polling preserves the selection')
@@ -315,10 +426,25 @@ test('map markers select underground hits, survive map refresh and discard obsol
   await byId('navigate').onsubmit({ preventDefault () {} })
   assert.deepEqual(JSON.parse(requests.filter(r => r.url === '/api/navigate').at(-1).options.body), { x: -1, z: -1 })
   assert.equal(byId('preview-status').textContent,'','Starting navigation removes the obsolete preview caption')
+  assert.equal(byId('search-reset').disabled, false, 'A finished search can be reset')
+  byId('search-reset').onclick()
+  assert.equal(byId('hits').children.length, 0)
+  assert.equal(hitPins().length, 0, 'Reset removes the hit pins')
+  assert.equal(byId('result').textContent, '')
+  assert.equal(byId('search-reset').disabled, true)
+  assert.equal(byId('target-x').value, '-1', 'Reset keeps the navigation target')
+  assert.equal(byId('block').value, 'diamond_ore', 'Reset keeps the search input')
   result = { ...result, hits: [], outcome: 'unknown' }
   await submit()
   assert.equal(byId('map-hit-options').children.length, 0)
   assert.equal(byId('hits').children.length, 0)
+  pendingSearch = new Promise(() => {})
+  void submit()
+  assert.equal(byId('find').disabled, true)
+  assert.equal(byId('search-reset').disabled, false, 'A running search can be cancelled')
+  byId('search-reset').onclick()
+  assert.equal(byId('find').disabled, false)
+  assert.equal(byId('search-reset').disabled, true)
   let finish
   pendingSearch = new Promise(resolve => { finish = resolve })
   const obsolete = submit()

@@ -1,0 +1,29 @@
+services:
+  bot:
+    image: ${BOT_IMAGE:?Set BOT_IMAGE in .env}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    pull_policy: never
+    init: true
+    restart: unless-stopped
+    environment:
+      BEDROCK_HOST: ${BEDROCK_HOST:?Set BEDROCK_HOST in .env}
+      BEDROCK_PORT: ${BEDROCK_PORT:-19132}
+      BEDROCK_VERSION: ${BEDROCK_VERSION:-1.26.60}
+      BEDROCK_TRANSPORT: ${BEDROCK_TRANSPORT:-nethernet}
+      BEDROCK_ICE_HOST: ${BEDROCK_ICE_HOST:-}
+      BOT_NAME: ${BOT_NAME:-MCBot}
+      MAP_WORLD_ID: ${MAP_WORLD_ID:-default}
+      CHUNK_RADIUS: ${CHUNK_RADIUS:-4}
+      CHAT_COMMANDS: ${CHAT_COMMANDS:-on}
+      OPEN_DOORS: ${OPEN_DOORS:-on}
+      WEB_HOST: 0.0.0.0
+      WEB_PORT: 3000
+    ports:
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-3000}:3000"
+    stop_grace_period: 10s
+    volumes:
+      - bot-identity:/app/data
+volumes:
+  bot-identity:

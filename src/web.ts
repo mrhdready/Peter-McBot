@@ -14,7 +14,7 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
   let mapClients = 0
   let metrics: ReturnType<typeof mapRuntimeMetrics> | null = null
   let metricsAt = 0
-  const snapshot = () => JSON.stringify({ ...bot.state.snapshot(), ...(places ? { placesRevision: places.revision } : {}), ...(skins ? { skin: skins.status() } : {}) })
+  const snapshot = () => JSON.stringify({ ...bot.state.snapshot(), chatRevision: bot.chatRevision, inventoryRevision: bot.state.inventory.revision, farm: bot.farm.status(), ...(places ? { placesRevision: places.revision } : {}), ...(skins ? { skin: skins.status() } : {}) })
   const broadcast = () => {
     const data = `data: ${snapshot()}\n\n`
     for (const response of streams) {
@@ -85,6 +85,11 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
       response.end(request.url === '/?measure=1' ? content.replace('</html>', mapPerformancePanel + '</html>') : content)
     } else if (request.method === 'GET' && request.url === '/api/status') {
       reply(200, bot.state.snapshot())
+    } else if (request.method === 'GET' && request.url === '/api/chat') {
+      reply(200, bot.chatLog())
+    } else if (request.method === 'GET' && request.url === '/api/inventory') {
+      const inventory = bot.state.inventory
+      reply(200, { revision: inventory.revision, known: inventory.known, items: inventory.items() })
     } else if (request.method === 'GET' && request.url === '/api/block-ids') {
       reply(200, { blockIds: bot.state.blockIds() })
     } else if (request.method === 'GET' && request.url === '/healthz') {
@@ -157,6 +162,42 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
         try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch { return reply(400, { error: 'Invalid JSON' }) }
         if (!body || typeof body !== 'object' || Array.isArray(body)) return reply(400, { error: 'Provide a JSON object' })
         finish(skins.save(body.png, body.model), 201)
+      })
+      request.on('error', () => reply(400, { error: 'Incomplete request' }))
+    // Farming on (around the bot or a saved place of the current dimension) or off.
+    } else if (request.method === 'POST' && request.url === '/api/farm') {
+      if (request.headers.origin && request.headers.origin !== `http://${request.headers.host}` && request.headers.origin !== `https://${request.headers.host}`) return reply(403, { error: 'Foreign origin rejected' })
+      if (request.headers['content-type'] !== 'application/json') return reply(415, { error: 'Use application/json' })
+      const limit = 128
+      if (Number(request.headers['content-length'] || 0) > limit) { request.resume(); return reply(413, { error: `Body exceeds ${limit} bytes` }) }
+      const chunks: Buffer[] = []; let bytes = 0; let rejected = false
+      request.on('data', (chunk: Buffer) => {
+        bytes += chunk.length
+        if (bytes > limit) { rejected = true; chunks.length = 0; reply(413, { error: `Body exceeds ${limit} bytes` }) }
+        else if (!rejected) chunks.push(chunk)
+      })
+      request.on('end', () => {
+        if (rejected) return
+        let body: Record<string, unknown>
+        try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch { return reply(400, { error: 'Invalid JSON' }) }
+        if (!body || typeof body !== 'object' || Array.isArray(body) || !['on', 'off'].includes(body.action as string) ||
+          (body.place !== undefined && body.place !== null && typeof body.place !== 'string')) return reply(400, { error: 'Provide action "on" or "off" and an optional place id' })
+        if (body.action === 'off') { bot.farm.off('Web-UI'); broadcast(); return reply(202, { farm: bot.farm.status() }) }
+        const p = bot.state.position
+        if (bot.state.status !== 'spawned' || !p) return reply(409, { error: 'Bot must be spawned before farming' })
+        const start = (anchor: { x: number; z: number; label: string }) => {
+          const error = bot.farm.start(anchor, false)
+          if (error) return reply(409, { error })
+          broadcast(); reply(202, { farm: bot.farm.status() })
+        }
+        if (!body.place) return start({ x: p.x, z: p.z, label: 'Bot-Position' })
+        const dimension = dimensionId(bot.state.dimension)
+        if (!places || dimension === null) return reply(409, { error: 'Places are unavailable' })
+        void places.list(dimension).then(({ pois }) => {
+          const poi = pois.find(entry => entry.id === body.place)
+          if (!poi) return reply(404, { error: 'Place not found in this dimension' })
+          start({ x: poi.x + .5, z: poi.z + .5, label: poi.name })
+        }).catch(error => reply(error instanceof WorldError ? error.status : 500, { error: error instanceof WorldError ? error.message : 'Places failed' }))
       })
       request.on('error', () => reply(400, { error: 'Incomplete request' }))
     } else if (request.method === 'POST' && ['/api/connect', '/api/disconnect', '/api/navigate', '/api/preview', '/api/stop_navigation'].includes(request.url || '')) {

@@ -188,6 +188,7 @@ test('navigation starts on the central tick; stop cancels queued starts and deat
   client.emit('spawn')
   const { Terrain } = require('../dist/terrain.js')
   bot.state.terrain = new Terrain((x,y,z) => Math.abs(x) < 10 && Math.abs(z) < 10 ? { boxes: y === 70 ? [[0,0,0,1,1,1]] : [], support: y === 70 } : null)
+  bot.state.planningTerrain = bot.state.terrain
   bot.state.chunks.set('0:0', { x:0, z:0, sections:new Map(), attempts:new Map(), requests:new Map() })
   assert.equal(bot.enqueue({ type: 'navigate', x: 3, z: 0 }), true)
   assert.equal(bot.state.navigation.status, 'idle')
@@ -244,7 +245,7 @@ test('other players are tracked from add, move and remove packets and cleared wi
   // Movement of an entity that was never announced as a player is ignored.
   client.emit('move_player', { runtime_id: 30n, position: { x: 1, y: 65, z: 1 } })
   assert.deepEqual(bot.state.snapshot().players, [])
-  client.emit('add_player', { runtime_id: 20n, username: 'Alex', position: { x: 5, y: 65.62, z: -3 } })
+  client.emit('add_player', { runtime_id: 20n, unique_id: -4294967291n, uuid: 'uuid-alex', username: 'Alex', position: { x: 5, y: 65.62, z: -3 } })
   client.emit('add_player', { runtime_id: 10n, username: 'Bot', position: { x: 0, y: 64, z: 0 } })
   assert.deepEqual(bot.state.snapshot().players, [{ id: '20', name: 'Alex', x: 5, y: 65.62, z: -3 }])
   client.emit('move_player', { runtime_id: 20n, position: { x: 6, y: 65.62, z: -4 } })
@@ -254,10 +255,46 @@ test('other players are tracked from add, move and remove packets and cleared wi
   assert.equal(bot.state.position.x, 0, 'Other players never move the bot')
   client.emit('move_player', { runtime_id: 20n, position: { x: NaN, y: 65, z: 0 } })
   assert.equal(bot.state.snapshot().players[0].x, 7.5)
+  // remove_entity names the unique ID, not the runtime ID.
   client.emit('remove_entity', { entity_id_self: 20n })
-  assert.deepEqual(bot.state.snapshot().players, [])
+  assert.equal(bot.state.players.size, 1, 'A runtime ID in remove_entity is another entity')
+  client.emit('remove_entity', { entity_id_self: -4294967291n })
+  assert.deepEqual(bot.state.snapshot().players, [], 'Leaving the range removes the player')
+  // Leaving the server removes the player by UUID even without remove_entity.
+  client.emit('add_player', { runtime_id: 22n, unique_id: -4294967290n, uuid: 'uuid-bob', username: 'Bob', position: { x: 2, y: 64, z: 2 } })
+  client.emit('player_list', { records: [{ type: 'add', uuid: 'uuid-bob', username: 'Bob' }] })
+  assert.equal(bot.state.players.size, 1)
+  client.emit('player_list', { records: [{ type: 'remove', uuid: 'uuid-bob' }] })
+  assert.equal(bot.state.players.size, 0, 'Disconnecting removes the player')
   client.emit('add_player', { runtime_id: 21n, username: 'Steve', position: { x: 1, y: 64, z: 1 } })
   client.emit('change_dimension', { dimension: 1 })
   assert.equal(bot.state.players.size, 0, 'A dimension change clears the players')
+  bot.stop()
+})
+
+test('the server player list excludes the bot, marks players in range and is cleared on disconnect', () => {
+  const { bot, clients } = setup()
+  bot.enqueue('connect'); bot.step()
+  const client = clients[0]
+  client.emit('start_game', { entity_id: -5n, player_position: { x: 0, y: 64, z: 0 }, dimension: 0 })
+  client.emit('spawn')
+  // Bedrock 1.26 player_list: a plain array whose records each carry their own type.
+  client.emit('player_list', { records: [
+    { type: 'add', uuid: 'uuid-self', entity_unique_id: -5n, username: 'Renamed' },
+    { type: 'add', uuid: 'uuid-name', entity_unique_id: -9n, username: config.username },
+    { type: 'add', uuid: 'uuid-alex', entity_unique_id: -6n, username: 'Alex' }
+  ] })
+  assert.deepEqual(bot.state.snapshot().roster, [{ name: 'Alex', position: null }], 'The bot is recognised by unique ID and by name')
+  // A player joining later arrives as its own packet.
+  client.emit('player_list', { records: [{ type: 'add', uuid: 'uuid-bob', entity_unique_id: -7n, username: 'Bob' }] })
+  assert.deepEqual(bot.state.snapshot().roster, [{ name: 'Alex', position: null }, { name: 'Bob', position: null }], 'A joining player is added')
+  client.emit('add_player', { runtime_id: 20n, unique_id: -6n, uuid: 'uuid-alex', username: 'Alex', position: { x: 5, y: 65, z: -3 } })
+  assert.deepEqual(bot.state.snapshot().roster[0], { name: 'Alex', position: { x: 5, y: 65, z: -3 } })
+  client.emit('remove_entity', { entity_id_self: -6n })
+  assert.deepEqual(bot.state.snapshot().roster[0], { name: 'Alex', position: null }, 'Leaving the range keeps the player listed')
+  client.emit('player_list', { records: [{ type: 'remove', uuid: 'uuid-bob' }] })
+  assert.deepEqual(bot.state.snapshot().roster, [{ name: 'Alex', position: null }])
+  bot.enqueue('disconnect'); bot.step()
+  assert.deepEqual(bot.state.snapshot().roster, [], 'Disconnecting clears the list')
   bot.stop()
 })

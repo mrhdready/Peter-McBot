@@ -4,6 +4,8 @@ import { WorldState, type Position } from './state.js'
 import { Navigator } from './navigation.js'
 import { RoutePlanner, type PreviewRoute, type Target } from './pathfinder.js'
 import { WorldError } from './world.js'
+import type { ContainerWindow, Inventory, TransferStep } from './inventory.js'
+import { Farmer } from './farming.js'
 
 export interface BotClient extends EventEmitter {
   queue(name: string, params: unknown): void
@@ -11,13 +13,40 @@ export interface BotClient extends EventEmitter {
   viewDistance?: number
   entityId?: unknown
 }
-export type Command = 'connect' | 'disconnect' | 'stop_navigation' | { type: 'navigate'; x: number; z: number }
+/** Who asked for a navigation via chat; navigations from the web UI have none. */
+export type NavigationOrigin = { player: string; label: string; give?: number; chest?: number; farm?: number }
+export type Command = 'connect' | 'disconnect' | 'stop_navigation' | { type: 'navigate'; x: number; z: number; origin?: NavigationOrigin }
+export type NavigationEnd = (origin: NavigationOrigin | null, status: string, message: string | null) => void
 export type ClientFactory = (config: Config) => BotClient
+/** One line of the web UI's chat log; `event` lines mark connects and disconnects. */
+export type ChatLine = { at: number; kind: 'chat' | 'whisper' | 'bot' | 'event'; name: string; text: string }
+const CHAT_LOG_SIZE = 100
 const isPosition = (position: Position | undefined): position is Position =>
   Boolean(position) && [position!.x, position!.y, position!.z].every(Number.isFinite)
+const isInventoryWindow = (id: string | number | undefined) => id === 'inventory' || id === 0
+type DropJob = { name: string; count: number; toward: Position; resolve: (dropped: number) => void; reject: (error: Error) => void }
+/** Why a chest visit ended: the transfer is complete, the source ran out, the target is full, or something interrupted it. */
+export type ChestStop = 'done' | 'source_empty' | 'target_full' | 'not_opened' | 'rejected' | 'timeout' | 'closed' | 'cancelled'
+export type ChestResult = { opened: boolean; size: number; moved: number; stop: ChestStop }
+/** Decides the next move while the chest is open; called again after every confirmed move. */
+export type ChestPlanner = (inventory: Inventory, window: ContainerWindow, moved: number) => TransferStep
+type ChestJob = {
+  chest: Position; next: ChestPlanner; phase: 'click' | 'opening' | 'content' | 'move' | 'waiting' | 'closing' | 'closed'
+  since: number; windowId: number | string | null; windowType: unknown; size: number; moved: number; stop: ChestStop | null; cancelled: boolean
+  resolve: (result: ChestResult) => void; reject: (error: Error) => void
+}
+// The server answers a chest click within this time once an input tick followed; content and close answers come at once.
+const CHEST_OPEN_MS = 2000
+const CHEST_CONTENT_MS = 1000
+const CHEST_CLOSE_MS = 1000
+// On open the server resends the bot's inventory with new stack IDs right after the chest content; wait for it before the first move.
+const CHEST_SETTLE_MS = 100
+const chestLog = (message: string) => console.log('[chest] ' + message)
 
 export class BotController {
   readonly state: WorldState
+  /** The farming mode; it lives with the bot so the web UI can switch it without chat commands. */
+  readonly farm: Farmer
   private navigator: Navigator
   private commands: Command[] = []
   private client: BotClient | null = null
@@ -29,17 +58,47 @@ export class BotController {
   private stopped = false
   private publishAt = 0
   private previewJob: { step: () => void; cancel: () => void } | null = null
+  private runActive = false
+  private runOrigin: NavigationOrigin | null = null
+  private chatLines: ChatLine[] = []
+  private chatLogRevision = 0
+  private drops: DropJob[] = []
+  private chestJob: ChestJob | null = null
+  /** Called for every chat or whisper line from another player. */
+  onChat: (sender: string, message: string) => void = () => {}
+  /** Called once when a navigation run ends: arrived, failed, stopped, replaced or lost with the connection. */
+  onNavigationEnd: NavigationEnd = () => {}
 
   constructor (
     private config: Config,
     private createClient: ClientFactory,
     private publish: () => void = () => {},
     private now: () => number = Date.now
-  ) { this.state = new WorldState(config.radius, config.version); this.navigator = new Navigator(this.state) }
+  ) {
+    this.state = new WorldState(config.radius, config.version); this.state.openDoors = config.openDoors !== false
+    this.navigator = new Navigator(this.state)
+    // Getters, because tests replace state and navigator after construction.
+    const bot = this
+    this.farm = new Farmer({
+      get state () { return bot.state }, get navigator () { return bot.navigator }, reach: config.radius * 16,
+      now: () => this.now(),
+      enqueue: command => this.enqueue(command),
+      entityId: () => this.client?.entityId,
+      useChest: (chest, next) => this.useChest(chest, next),
+      cancelChest: () => this.cancelChest(),
+      stopNavigation: () => {
+        if (!this.runActive || this.runOrigin?.farm === undefined) return
+        this.navigator.stop()
+        this.settleNavigation()
+      },
+      publish: () => { this.publishAt = 0 }
+    })
+  }
 
   enqueue (command: Command) {
     if (this.stopped) return false
-    if (typeof command === 'object' && (!command || command.type !== 'navigate' || ![command.x, command.z].every(n => Number.isInteger(n) && Math.abs(n) <= 30000000))) return false
+    if (typeof command === 'object' && (!command || command.type !== 'navigate' || ![command.x, command.z].every(n => Number.isInteger(n) && Math.abs(n) <= 30000000) ||
+      (command.origin !== undefined && (typeof command.origin?.player !== 'string' || typeof command.origin.label !== 'string')))) return false
     if (command === 'stop_navigation') {
       this.commands = this.commands.filter(command => typeof command === 'string' && command !== 'stop_navigation')
       this.commands.unshift(command)
@@ -62,9 +121,19 @@ export class BotController {
     for (const command of this.commands.splice(0)) {
       if (typeof command === 'object') {
         this.previewJob?.cancel()
-        this.navigator.start(command, this.now())
+        // A target from the web UI ends farming; the farmer's own targets keep it running.
+        if (!command.origin) this.farm.off('UI-Navigation')
+        this.cancelChest()
+        // A new target replaces the running one; report that run as stopped first.
+        if (this.runActive) { this.runActive = false; this.endRun(this.runOrigin, 'stopped', 'Neues Ziel gesetzt.') }
+        this.navigator.start({ x: command.x, z: command.z }, this.now())
+        this.runActive = true; this.runOrigin = command.origin ? { ...command.origin } : null
+        this.settleNavigation()
       } else if (command === 'stop_navigation') {
+        this.farm.off('Stopp')
+        this.cancelChest()
         this.navigator.stop()
+        this.settleNavigation()
       } else if (command === 'disconnect') {
         this.wanted = false
         this.closeClient()
@@ -82,8 +151,19 @@ export class BotController {
     if (this.wanted && !this.client && this.now() >= this.retryAt) this.connect()
     if (this.client && this.state.status === 'spawned') {
       const send = (name: string, params: unknown) => this.client?.queue(name, params)
-      try { this.state.requestSubchunks(send, this.now()); this.navigator.step(send, this.now()) }
+      try {
+        this.state.requestSubchunks(send, this.now()); this.navigator.step(send, this.now())
+        // The bot turns towards the receiver first; the server throws dropped items in the facing direction.
+        for (const job of this.drops.splice(0)) {
+          this.navigator.face(send, job.toward)
+          this.state.inventory.drop(send, job.name, job.count, this.now()).then(job.resolve, job.reject)
+        }
+        this.stepChest(send)
+        this.farm.step(send)
+        this.state.inventory.expire(this.now())
+      }
       catch (error) { this.failed(error instanceof Error ? error.message : String(error)) }
+      this.settleNavigation()
     }
     if (this.now() >= this.publishAt) {
       this.publishAt = this.now() + 1000
@@ -137,6 +217,7 @@ export class BotController {
       const active = () => this.client === client
       let initialSpawnPending = true
       let loadingFinished = false
+      let selfUniqueId: string | null = null
       const finishLoading = () => {
         if (!loadingFinished && !initialSpawnPending && this.state.status === 'spawned') {
           loadingFinished = true
@@ -147,8 +228,9 @@ export class BotController {
       client.on('error', (error: Error) => { if (active()) this.failed(error.message) })
       client.on('kick', (packet: { message?: string }) => { if (active()) this.failed(packet.message || 'Server kick') })
       client.on('close', () => { if (active()) this.failed('Connection closed') })
-      client.on('start_game', (packet: { player_position: Position; dimension: number | string; block_network_ids_are_hashes?: boolean; current_tick?: bigint }) => {
+      client.on('start_game', (packet: { entity_id?: bigint | string; player_position: Position; dimension: number | string; block_network_ids_are_hashes?: boolean; current_tick?: bigint }) => {
         if (!active()) return
+        if (packet.entity_id !== undefined) selfUniqueId = String(packet.entity_id)
         if (typeof packet.block_network_ids_are_hashes === 'boolean') this.state.beginWorld(packet.dimension, packet.block_network_ids_are_hashes)
         if (typeof packet.current_tick === 'bigint') this.navigator.synchroniseTick(packet.current_tick)
         this.updatePosition(packet.player_position)
@@ -169,6 +251,7 @@ export class BotController {
         this.attempts = 0
         client.queue('request_chunk_radius', { chunk_radius: this.config.radius, max_radius: this.config.radius })
         finishLoading()
+        this.logChat('event', '', 'Verbunden')
         this.publish()
       })
       client.on('respawn', (packet: { state: number; position: Position }) => {
@@ -187,22 +270,105 @@ export class BotController {
           if (packet.mode === 'teleport' || packet.mode === 'reset' || packet.mode === 1 || packet.mode === 2) this.navigator.acknowledgeTeleport()
         } else this.movePlayer(packet.runtime_id, packet.position)
       })
-      client.on('add_player', (packet: { runtime_id: bigint | string; username: string; position: Position }) => {
+      client.on('add_player', (packet: { runtime_id: bigint | string; unique_id?: bigint | string; uuid?: string; username: string; position: Position }) => {
         const id = String(packet.runtime_id)
-        if (active() && id !== String(client.entityId) && isPosition(packet.position)) this.state.players.set(id, { name: String(packet.username ?? ''), position: { ...packet.position } })
+        if (active() && id !== String(client.entityId) && isPosition(packet.position)) {
+          this.state.players.set(id, { name: String(packet.username ?? ''), position: { ...packet.position }, uniqueId: String(packet.unique_id ?? id), uuid: String(packet.uuid ?? '') })
+        }
       })
       // Delta packets carry only the changed absolute coordinates.
       client.on('move_entity_delta', (packet: { runtime_entity_id: bigint | string; x?: number; y?: number; z?: number }) => {
-        const player = active() ? this.state.players.get(String(packet.runtime_entity_id)) : undefined
-        if (!player) return
-        this.movePlayer(packet.runtime_entity_id, {
-          x: Number.isFinite(packet.x) ? packet.x! : player.position.x,
-          y: Number.isFinite(packet.y) ? packet.y! : player.position.y,
-          z: Number.isFinite(packet.z) ? packet.z! : player.position.z
-        })
+        const id = String(packet.runtime_entity_id)
+        const entity = active() ? this.state.players.get(id) ?? this.state.items.get(id) : undefined
+        if (!entity) return
+        const position = {
+          x: Number.isFinite(packet.x) ? packet.x! : entity.position.x,
+          y: Number.isFinite(packet.y) ? packet.y! : entity.position.y,
+          z: Number.isFinite(packet.z) ? packet.z! : entity.position.z
+        }
+        if (this.state.players.has(id)) this.movePlayer(packet.runtime_entity_id, position)
+        else entity.position = position
       })
+      // Dropped items (e.g. from harvesting) until someone picks them up or they despawn; the farmer walks onto them.
+      client.on('add_item_entity', (packet: { runtime_entity_id: bigint | string; entity_id_self?: bigint | string; item?: { network_id?: number; count?: number }; position: Position }) => {
+        if (!active() || !isPosition(packet.position)) return
+        const id = String(packet.runtime_entity_id)
+        this.state.items.set(id, { uniqueId: String(packet.entity_id_self ?? id), name: this.state.inventory.itemName(packet.item?.network_id ?? 0),
+          count: packet.item?.count ?? 0, position: { ...packet.position } })
+      })
+      client.on('take_item_entity', (packet: { runtime_entity_id: bigint | string }) => {
+        if (active()) this.state.items.delete(String(packet.runtime_entity_id))
+      })
+      // remove_entity carries the unique entity ID, which differs from the runtime ID on BDS.
       client.on('remove_entity', (packet: { entity_id_self: bigint | string }) => {
-        if (active()) this.state.players.delete(String(packet.entity_id_self))
+        if (!active()) return
+        const uniqueId = String(packet.entity_id_self)
+        for (const [id, player] of this.state.players) if (player.uniqueId === uniqueId) this.state.players.delete(id)
+        for (const [id, item] of this.state.items) if (item.uniqueId === uniqueId) this.state.items.delete(id)
+      })
+      // player_list names every player on the server; each record carries its own add/remove type.
+      // The bot itself is recognised by unique ID or name.
+      client.on('player_list', (packet: { records?: { type?: string; uuid?: string; entity_unique_id?: bigint | string; username?: string }[] }) => {
+        if (!active() || !Array.isArray(packet.records)) return
+        for (const record of packet.records) {
+          if (!record.uuid) continue
+          const uuid = String(record.uuid)
+          if (record.type === 'add') {
+            if (String(record.entity_unique_id) === selfUniqueId || record.username === this.config.username) continue
+            this.state.roster.set(uuid, String(record.username ?? ''))
+          } else if (record.type === 'remove') {
+            this.state.roster.delete(uuid)
+            for (const [id, player] of this.state.players) if (player.uuid === uuid) this.state.players.delete(id)
+          }
+        }
+      })
+      // Only player-authored lines; the bot's own echo, system and translated messages are ignored.
+      client.on('text', (packet: { type?: string; source_name?: string; message?: string }) => {
+        if (!active() || (packet.type !== 'chat' && packet.type !== 'whisper')) return
+        // Servers append formatting codes such as §r to sender names, also to the echo of the bot's own lines.
+        const sender = String(packet.source_name ?? '').replace(/§./g, '').trim()
+        if (sender && sender !== this.config.username && typeof packet.message === 'string') {
+          this.logChat(packet.type, sender, packet.message)
+          this.onChat(sender, packet.message)
+        }
+      })
+      // Item names arrive once per login; the inventory (window 0) arrives complete after spawning and slot by slot afterwards.
+      client.on('item_registry', (packet: { itemstates?: unknown }) => { if (active()) this.state.inventory.setRegistry(packet.itemstates) })
+      client.on('inventory_content', (packet: { window_id?: string | number; input?: unknown }) => {
+        if (active() && isInventoryWindow(packet.window_id)) { this.state.inventory.setContent(packet.input); this.publishAt = 0 }
+        // The opened chest's slots come with the window ID from container_open (54 for a double chest).
+        const job = this.chestJob
+        if (active() && job?.phase === 'content' && packet.window_id === job.windowId) {
+          job.size = this.state.inventory.openWindow(job.windowId, job.windowType, packet.input).slots.length
+          job.phase = 'move'; job.since = this.now()
+        }
+      })
+      client.on('container_open', (packet: { window_id?: string | number; window_type?: unknown; coordinates?: Position }) => {
+        const job = this.chestJob
+        if (!active() || job?.phase !== 'opening' || packet.window_id === undefined) return
+        chestLog(`Kiste bei (${job.chest.x}, ${job.chest.y}, ${job.chest.z}) offen: Fenster ${packet.window_id}, Typ ${String(packet.window_type)}.`)
+        job.windowId = packet.window_id; job.windowType = packet.window_type
+        job.phase = 'content'; job.since = this.now()
+      })
+      client.on('container_close', (packet: { window_id?: string | number }) => {
+        const job = this.chestJob
+        if (!active() || !job || job.windowId === null || packet.window_id !== job.windowId) return
+        // Our own close is confirmed; any other close comes from the server (e.g. the chest was broken).
+        if (job.phase !== 'closing' && job.phase !== 'closed') { job.stop ??= 'closed'; chestLog('Der Server hat die Kiste geschlossen.') }
+        this.finishChest(true)
+      })
+      client.on('inventory_slot', (packet: { window_id?: string | number; slot?: number; item?: unknown }) => {
+        if (active() && isInventoryWindow(packet.window_id)) { this.state.inventory.setSlot(packet.slot, packet.item); this.publishAt = 0 }
+      })
+      // Pickups arrive as a server-sent inventory_transaction whose container action carries the slot's new item (verified live).
+      client.on('inventory_transaction', (packet: { transaction?: { actions?: { source_type?: string; window_id?: string | number; slot?: number; new_item?: unknown }[] } }) => {
+        if (!active()) return
+        for (const action of packet.transaction?.actions ?? []) {
+          if (action.source_type === 'container' && isInventoryWindow(action.window_id)) { this.state.inventory.setSlot(action.slot, action.new_item); this.publishAt = 0 }
+        }
+      })
+      client.on('item_stack_response',(packet: { responses?: unknown }) => {
+        if (active()) { this.state.inventory.response(packet.responses); this.publishAt = 0 }
       })
       client.on('server_post_move', (packet: { position: Position }) => {
         if (active()) this.updatePosition(packet.position)
@@ -244,6 +410,133 @@ export class BotController {
     return this.state.searchBlocks(blockId, limit, this.state.position, signal)
   }
 
+  /** Sends a public chat line; returns false while not spawned. */
+  say (message: string) {
+    if (!this.client || this.state.status !== 'spawned') return false
+    this.client.queue('text', {
+      needs_translation: false, category: 'authored', type: 'chat', source_name: this.config.username, message,
+      xuid: '', platform_chat_id: '', has_filtered_message: false
+    })
+    this.logChat('bot', this.config.username, message)
+    return true
+  }
+
+  /** Drops up to `count` of an inventory item towards `toward` on the next tick; resolves with the amount the server confirmed. */
+  dropItems (name: string, count: number, toward: Position): Promise<number> {
+    if (this.stopped || !this.client || this.state.status !== 'spawned') return Promise.reject(new Error('Bot ist nicht verbunden.'))
+    return new Promise((resolve, reject) => this.drops.push({ name, count, toward: { ...toward }, resolve, reject }))
+  }
+
+  /**
+   * Opens the chest at `chest` (the bot must already stand within reach), moves items one stack portion at a time
+   * as `next` decides, and closes it again. Resolves with what the server confirmed; rejects only on disconnect.
+   */
+  useChest (chest: Position, next: ChestPlanner): Promise<ChestResult> {
+    if (this.stopped || !this.client || this.state.status !== 'spawned') return Promise.reject(new Error('Bot ist nicht verbunden.'))
+    if (this.chestJob) return Promise.reject(new Error('Es ist schon eine Kiste offen.'))
+    return new Promise((resolve, reject) => {
+      this.chestJob = { chest: { ...chest }, next, phase: 'click', since: this.now(), windowId: null, windowType: null, size: 0, moved: 0, stop: null, cancelled: false, resolve, reject }
+    })
+  }
+
+  /** True while a chest visit runs. */
+  get chestBusy () { return this.chestJob !== null }
+
+  /** Ends a chest visit early: a running request is still awaited, then the chest is closed. */
+  cancelChest () {
+    const job = this.chestJob
+    if (!job || job.cancelled) return
+    job.cancelled = true
+    job.stop ??= 'cancelled'
+    chestLog('Kistenzugriff abgebrochen.')
+    if (job.phase === 'click' || job.phase === 'opening') this.finishChest(false)
+    else if (job.phase === 'content' || job.phase === 'move') job.phase = 'closing'
+  }
+
+  // One tick of the chest visit: click, keep sending input until the server opens it, move, close.
+  private stepChest (send: (name: string, params: unknown) => void) {
+    const job = this.chestJob
+    if (!job) return
+    const now = this.now()
+    const center = { x: job.chest.x + .5, z: job.chest.z + .5 }
+    if (job.phase === 'click') {
+      const runtimeId = this.state.blockRuntimeIdAt(job.chest.x, job.chest.y, job.chest.z)
+      if (runtimeId === null) { job.stop = 'not_opened'; return this.finishChest(false) }
+      chestLog(`Klicke Kiste bei (${job.chest.x}, ${job.chest.y}, ${job.chest.z}).`)
+      this.navigator.clickBlock(send, job.chest, runtimeId, this.state.inventory.heldItem(0))
+      // The server handles the click only together with the next input packet (verified live).
+      this.navigator.face(send, center)
+      job.phase = 'opening'; job.since = now
+    } else if (job.phase === 'opening') {
+      if (now - job.since > CHEST_OPEN_MS) { chestLog('Kiste hat sich nicht geöffnet.'); job.stop = 'not_opened'; return this.finishChest(false) }
+      this.navigator.face(send, center)
+    } else if (job.phase === 'content') {
+      if (now - job.since > CHEST_CONTENT_MS) { job.stop = 'timeout'; job.phase = 'closing' }
+    } else if (job.phase === 'move' && now - job.since >= CHEST_SETTLE_MS) {
+      const window = this.state.inventory.window
+      const decision = window ? job.next(this.state.inventory, window, job.moved) : { stop: 'timeout' as const }
+      if ('stop' in decision) { job.stop = decision.stop; job.phase = 'closing' }
+      else {
+        job.phase = 'waiting'
+        const move = decision.move
+        this.state.inventory.place(send, move, now).then(response => {
+          if (this.chestJob !== job) return
+          if (response.status === 'ok' || response.status === 0) job.moved += move.count
+          else job.stop = 'rejected'
+          job.phase = job.stop === 'rejected' || job.cancelled ? 'closing' : 'move'
+        }, () => {
+          if (this.chestJob !== job) return
+          job.stop ??= 'timeout'; job.phase = 'closing'
+        })
+      }
+    }
+    if (job.phase === 'closing') {
+      send('container_close', { window_id: job.windowId, window_type: job.windowType, server: false })
+      job.phase = 'closed'; job.since = now
+    } else if (job.phase === 'closed' && now - job.since > CHEST_CLOSE_MS) this.finishChest(true)
+  }
+
+  private finishChest (opened: boolean) {
+    const job = this.chestJob
+    if (!job) return
+    this.chestJob = null
+    this.state.inventory.window = null
+    const result = { opened, size: job.size, moved: job.moved, stop: job.stop ?? 'done' }
+    chestLog(`Kiste fertig: ${JSON.stringify(result)}.`)
+    job.resolve(result)
+  }
+
+  /** Revision of the chat log; it changes with every new line. */
+  get chatRevision () { return this.chatLogRevision }
+
+  /** The last 100 chat lines, oldest first; kept in memory only. */
+  chatLog () { return { revision: this.chatLogRevision, lines: this.chatLines.map(line => ({ ...line })) } }
+
+  private logChat (kind: ChatLine['kind'], name: string, text: string) {
+    // Minecraft formatting codes (§x) are dropped; the UI shows plain text.
+    const plain = (value: string) => value.replace(/§./g, '')
+    this.chatLines.push({ at: this.now(), kind, name: plain(name), text: plain(text) })
+    if (this.chatLines.length > CHAT_LOG_SIZE) this.chatLines.shift()
+    this.chatLogRevision++
+    // The next tick publishes, so a burst of lines costs one broadcast.
+    this.publishAt = 0
+  }
+
+  /** The chat origin of the running navigation, or null when none runs or it came from the web UI. */
+  get navigationOrigin () { return this.runActive ? this.runOrigin : null }
+
+  private settleNavigation () {
+    if (!this.runActive || ['planning', 'moving'].includes(this.state.navigation.status)) return
+    this.runActive = false
+    this.endRun(this.runOrigin, this.state.navigation.status, this.state.navigation.message)
+  }
+
+  // The farmer's own runs go back to the farmer; all others to onNavigationEnd.
+  private endRun (origin: NavigationOrigin | null, status: string, message: string | null) {
+    if (origin?.farm !== undefined) this.farm.navigationEnded(origin.farm, status)
+    else this.onNavigationEnd(origin, status, message)
+  }
+
   private failed (message: string) {
     this.closeClient()
     this.state.lastError = message
@@ -268,9 +561,15 @@ export class BotController {
 
   private closeClient () {
     this.previewJob?.cancel()
+    if (this.state.status === 'spawned') this.logChat('event', '', 'Verbindung getrennt')
     const old = this.client
     this.client = null
+    for (const job of this.drops.splice(0)) job.reject(new Error('Verbindung getrennt.'))
+    this.chestJob?.reject(new Error('Verbindung getrennt.'))
+    this.chestJob = null
+    this.farm.disconnected()
     this.navigator.reset()
+    this.settleNavigation()
     this.state.resetWorld()
     old?.close()
   }

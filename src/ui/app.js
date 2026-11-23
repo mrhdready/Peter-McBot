@@ -22,6 +22,10 @@ let mapContext = '';
 let previousNavigationStatus = null;
 let botPosition = null;
 let players = [];
+let chatRevision = null;
+let chatRequest = null;
+let inventoryRevision = null;
+let inventoryRequest = null;
 // A hash of the gamertag picks the animal, so a player keeps it across reconnects and browser tabs.
 const playerAnimals = ['🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🐔','🐧','🐺','🐗','🐴','🦄','🐲'];
 function playerAnimal (name) {
@@ -179,8 +183,8 @@ byId('nav-stop').onclick = async () => {
 function clearSearchResults () {
   if (searchRequest) searchRequest.abort();
   searchRequest = null; searchResult = null; selectedHit = null;
-  byId('hits').replaceChildren(); byId('map-hit-options').replaceChildren();
-  byId('map-hit-info').textContent = 'Türkis: Treffer der letzten Blocksuche, auch unter der Oberfläche. Marker anklicken oder mit Pfeiltasten und Enter auswählen.';
+  byId('hits').replaceChildren(); byId('map-hit-options').replaceChildren(); byId('search-reset').disabled = true;
+  byId('map-hit-info').textContent = '⛏️: Treffer der letzten Blocksuche, auch unter der Oberfläche. Marker anklicken oder mit Pfeiltasten und Enter auswählen.';
   drawMap();
 }
 function selectHit (hit) {
@@ -365,25 +369,11 @@ function drawMap () {
     context.strokeStyle = '#111111'; context.lineWidth = 2 * pixel; context.stroke();
     context.setLineDash([]);
   }
-  if (searchResult && (!archiveEnabled || mapDimension === dimensionNumber(lastDimension)) && searchResult.coverage.session === map.coverage.session) {
-    const drawn = new Set();
-    for (const hit of searchResult.hits) {
-      const x = hit.x - map.x; const z = hit.z - map.z; const key = x + ':' + z;
-      if (x < 0 || z < 0 || x >= map.width || z >= map.height || drawn.has(key)) continue;
-      drawn.add(key);
-      context.beginPath(); context.arc(x + .5, z + .5, 1.1, 0, Math.PI * 2);
-      context.fillStyle = '#22d3ee'; context.fill(); context.strokeStyle = '#083344'; context.lineWidth = .4; context.stroke();
-    }
-    if (selectedHit && selectedHit.x >= map.x && selectedHit.x < map.x + map.width && selectedHit.z >= map.z && selectedHit.z < map.z + map.height) {
-      context.beginPath(); context.arc(selectedHit.x - map.x + .5, selectedHit.z - map.z + .5, 1.6, 0, Math.PI * 2);
-      context.strokeStyle = '#fff'; context.lineWidth = .5; context.stroke();
-    }
-  }
   if (mapCursor) {
     context.strokeStyle = '#fff'; context.lineWidth = .4;
     context.strokeRect(mapCursor.x, mapCursor.z, 1, 1);
   }
-  // Bot, target and places are DOM pins above the canvas.
+  // Bot, target, places, players and search hits are DOM pins above the canvas.
   updatePins(map);
 }
 /* Map pins, pin overlay, saved places and navigation history. */
@@ -392,6 +382,16 @@ function pinSpecs (map) {
   const live = !archiveEnabled || mapDimension === dimensionNumber(lastDimension);
   if (placesEnabled && places.dimension === mapDimension) {
     for (const poi of places.pois) specs.push({key:'poi:' + poi.id, kind:'poi', x:poi.x + .5, z:poi.z + .5, poi});
+  }
+  // One hit pin per X/Z column; hits below each other are chosen via #map-hit-options.
+  if (live && searchResult && searchResult.coverage.session === map.coverage.session) {
+    const columns = new Map();
+    for (const hit of searchResult.hits) {
+      const key = 'hit:' + hit.x + ':' + hit.z;
+      if (!columns.has(key)) columns.set(key, {key, kind:'hit', x:hit.x + .5, z:hit.z + .5, hits:[]});
+      columns.get(key).hits.push(hit);
+    }
+    specs.push(...columns.values());
   }
   if (live) for (const player of players) specs.push({key:'player:' + player.id, kind:'player', x:player.x, z:player.z, player});
   const targetX = Number(byId('target-x').value); const targetZ = Number(byId('target-z').value);
@@ -416,6 +416,7 @@ function createPin (spec) {
     element.className = 'pin pin-center pin-player'; element.textContent = playerAnimal(spec.player.name);
     return element;
   }
+  if (spec.kind === 'hit') { element.textContent = '⛏️'; return element; }
   element.className = spec.kind === 'bot' ? 'pin pin-center' : 'pin pin-pushpin';
   element.textContent = spec.kind === 'bot' ? '🤖' : '📌';
   return element;
@@ -427,6 +428,7 @@ function updatePins (map) {
     pin.spec = spec;
     pin.element.style.left = (spec.x - map.x) / map.width * 100 + '%';
     pin.element.style.top = (spec.z - map.z) / map.height * 100 + '%';
+    if (spec.kind === 'hit') pin.element.className = 'pin pin-center pin-hit' + (spec.hits.includes(selectedHit) ? ' selected' : '');
     if (spec.kind === 'poi') pin.element.ariaLabel = 'Ort ' + spec.poi.name + ' – X: ' + spec.poi.x + ', Z: ' + spec.poi.z + '. Enter übernimmt ihn als Ziel.';
     next.set(spec.key, pin);
   }
@@ -456,6 +458,12 @@ function overlayText (spec) {
     return playerAnimal(player.name) + ' ' + (player.name || 'Spieler') + '\nX: ' + player.x.toFixed(1) + ', Y: ' + player.y.toFixed(1) + ', Z: ' + player.z.toFixed(1) +
       (botPosition ? '\n' + Math.round(Math.hypot(player.x - botPosition.x, player.z - botPosition.z)) + ' Blöcke vom Bot entfernt' : '');
   }
+  if (spec.kind === 'hit') {
+    const levels = spec.hits.map(hit => hit.y).sort((a, b) => a - b);
+    return '⛏️ ' + searchResult.blockId + ' (' + levels.length + ' Treffer)\nX: ' + Math.floor(spec.x) + ', Z: ' + Math.floor(spec.z) +
+      '\nY: ' + levels.slice(0, 5).join(', ') + (levels.length > 5 ? ' +' + (levels.length - 5) + ' weitere' : '') +
+      (botPosition ? '\n' + Math.round(Math.hypot(spec.x - botPosition.x, spec.z - botPosition.z)) + ' Blöcke vom Bot entfernt' : '') + '\n' + hint;
+  }
   return '📌 Ziel\nX: ' + Math.floor(spec.x) + ', Z: ' + Math.floor(spec.z) + '\n' + (byId('preview-status').textContent || byId('nav-status').textContent);
 }
 function showOverlay (key) {
@@ -481,7 +489,7 @@ function pinAt (clientX, clientY) {
   let best = null; let bestDistance = 20;
   for (const pin of pins.values()) {
     const x = bounds.left + (pin.spec.x - currentMap.x) * scale;
-    const z = bounds.top + (pin.spec.z - currentMap.z) * scale - (pin.spec.kind === 'bot' || pin.spec.kind === 'player' ? 0 : 14);
+    const z = bounds.top + (pin.spec.z - currentMap.z) * scale - (pin.spec.kind === 'bot' || pin.spec.kind === 'player' || pin.spec.kind === 'hit' ? 0 : 14);
     const distance = Math.hypot(clientX - x, clientY - z);
     // Strictly nearer only: on a tie the earlier pin wins, so a place beats the target or bot on the same cell.
     if (distance < bestDistance) { best = pin; bestDistance = distance; }
@@ -549,6 +557,115 @@ function renderPlaces () {
     return item;
   }));
   byId('history-empty').hidden = places.history.length > 0;
+  renderFarmAnchors();
+}
+// The farm anchor is the bot's position or a saved place of the connected dimension.
+function renderFarmAnchors () {
+  const select = byId('farm-anchor'); const chosen = select.value;
+  const pois = placesEnabled && dimensionNumber(lastDimension) === places.dimension ? places.pois : [];
+  const option = (value, label) => { const entry = document.createElement('option'); entry.value = value; entry.textContent = label; return entry; };
+  select.replaceChildren(option('', 'Aktuelle Bot-Position'), ...pois.map(poi => option(poi.id, (poiIcons[poi.icon] || '📍') + ' ' + poi.name)));
+  select.value = pois.some(poi => poi.id === chosen) ? chosen : '';
+}
+let farmState = null;
+function renderFarm () {
+  const farm = farmState;
+  if (!farm) return;
+  byId('farm-toggle').textContent = farm.enabled ? 'Farming beenden' : 'Farming starten';
+  byId('farm-toggle').disabled = !farm.enabled && botStatus !== 'spawned';
+  byId('farm-anchor').disabled = farm.enabled;
+  const until = farm.pausedUntil ? ' bis ' + new Date(farm.pausedUntil).toLocaleTimeString('de-DE', {hour:'2-digit', minute:'2-digit', second:'2-digit'}) : '';
+  byId('farm-status').textContent = (farm.enabled ? farm.activity + until + ' – Anker: ' + farm.anchor.label + ', Radius ' + farm.radius + '.' : 'Farming ist aus.') +
+    (farm.lastSummary ? ' Zuletzt: ' + farm.lastSummary : '');
+}
+byId('farm-toggle').onclick = async () => {
+  const on = !farmState?.enabled;
+  try {
+    const body = on ? {action:'on', place:byId('farm-anchor').value || null} : {action:'off'};
+    const response = await fetch('/api/farm', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'HTTP ' + response.status);
+    if (result.farm) farmState = result.farm;
+    byId('farm-feedback').textContent = on ? 'Farming gestartet.' : 'Farming beendet.';
+  } catch (error) { byId('farm-feedback').textContent = (on ? 'Start' : 'Beenden') + ' fehlgeschlagen: ' + error.message; }
+  renderFarm();
+};
+// Players in range first by distance, then everyone else alphabetically.
+function renderPlayers (roster, spawned) {
+  const distance = player => player.position && botPosition ? Math.hypot(player.position.x - botPosition.x, player.position.z - botPosition.z) : null;
+  const entries = roster.map(player => ({player, distance:distance(player)}));
+  entries.sort((a, b) => (a.distance === null) - (b.distance === null) || (a.distance ?? 0) - (b.distance ?? 0) ||
+    a.player.name.localeCompare(b.player.name, 'de', {sensitivity:'base'}));
+  byId('players-heading').textContent = 'Spieler (' + roster.length + ')';
+  byId('player-list').replaceChildren(...entries.map(({player, distance}) => {
+    const item = document.createElement('li'); const text = document.createElement('span');
+    text.textContent = playerAnimal(player.name) + ' ' + (player.name || 'Spieler') + ' – ' + (distance === null ? 'nicht in Reichweite' : Math.round(distance) + ' Blöcke entfernt');
+    if (distance === null) item.className = 'player-far';
+    item.append(text);
+    return item;
+  }));
+  byId('player-empty').hidden = roster.length > 0;
+  byId('player-empty').textContent = spawned ? 'Keine anderen Spieler online.' : 'Nicht verbunden.';
+}
+async function loadChat () {
+  if (chatRequest) chatRequest.abort();
+  const controller = chatRequest = new AbortController();
+  try {
+    const response = await fetch('/api/chat', {signal:controller.signal});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error);
+    if (chatRequest === controller) renderChat(Array.isArray(result.lines) ? result.lines : []);
+  } catch (error) {
+    // The next status update retries.
+    if (chatRequest === controller) chatRevision = null;
+  } finally { if (chatRequest === controller) chatRequest = null; }
+}
+async function loadInventory () {
+  if (inventoryRequest) inventoryRequest.abort();
+  const controller = inventoryRequest = new AbortController();
+  try {
+    const response = await fetch('/api/inventory', {signal:controller.signal});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error);
+    if (inventoryRequest === controller) renderInventory(Boolean(result.known), Array.isArray(result.items) ? result.items : []);
+  } catch (error) {
+    // The next status update retries.
+    if (inventoryRequest === controller) inventoryRevision = null;
+  } finally { if (inventoryRequest === controller) inventoryRequest = null; }
+}
+// Item totals as the server reports them, largest first; read-only.
+function renderInventory (known, items) {
+  const total = items.reduce((sum, item) => sum + item.count, 0);
+  byId('inventory-heading').textContent = 'Inventar (' + total + ')';
+  byId('inventory-list').replaceChildren(...items.map(item => {
+    const entry = document.createElement('li');
+    entry.textContent = item.name.replace(/^minecraft:/, '') + ' ×' + item.count;
+    return entry;
+  }));
+  byId('inventory-empty').hidden = items.length > 0;
+  byId('inventory-empty').textContent = known ? 'Inventar leer.' : 'Inventar unbekannt (nicht verbunden).';
+}
+function chatSpan (className, text) {
+  const span = document.createElement('span'); span.className = className; span.textContent = text;
+  return span;
+}
+// Follows new lines only while the log is scrolled to the end, so reading older lines is not interrupted.
+function renderChat (lines) {
+  const log = byId('chat-log');
+  const atEnd = !(log.scrollHeight - log.scrollTop - log.clientHeight > 8);
+  log.replaceChildren(...lines.map(line => {
+    const item = document.createElement('div');
+    const time = new Date(line.at).toLocaleTimeString('de-DE', {hour:'2-digit', minute:'2-digit'});
+    item.className = 'chat-line chat-' + line.kind;
+    if (line.kind === 'event') { item.textContent = time + ' · ' + line.text; return item; }
+    const icon = line.kind === 'bot' ? '🤖' : playerAnimal(line.name);
+    item.append(chatSpan('chat-time', time + ' '));
+    item.append(chatSpan('chat-name', icon + ' ' + line.name + (line.kind === 'whisper' ? ' flüstert' : '') + ': '));
+    item.append(chatSpan('chat-text', line.text));
+    return item;
+  }));
+  byId('chat-empty').hidden = lines.length > 0;
+  if (atEnd) log.scrollTop = log.scrollHeight;
 }
 async function deletePoi (poi) {
   if (deleteArmed?.id !== poi.id) {
@@ -638,7 +755,7 @@ function applyPointer () {
     const pin = pinAt(event.clientX, event.clientY);
     if (pin) { if (overlayPin !== pin.key) showOverlay(pin.key); }
     else if (overlayPin && lastPointerType !== 'touch') hideOverlay();
-    canvas.style.cursor = pin?.spec.kind === 'poi' ? 'pointer' : '';
+    canvas.style.cursor = pin?.spec.kind === 'poi' || pin?.spec.kind === 'hit' ? 'pointer' : '';
   }
 }
 canvas.onpointermove = event => {
@@ -664,13 +781,13 @@ canvas.onclick = event => {
   if (dragged) { dragged = false; return; }
   if (!currentMap) return;
   // First tap on a pin shows its overlay, the next tap marks it;
-  // a mouse click on a place selects it directly, while bot and target pins keep the plain cell click.
+  // a mouse click on a place or search hit selects it directly, while bot and target pins keep the plain cell click.
   const pin = pinAt(event.clientX, event.clientY);
   if (lastPointerType === 'touch') {
     if (pin && overlayPin !== pin.key) { showOverlay(pin.key); return; }
     hideOverlay();
     if (pin) { activatePin(pin); return; }
-  } else if (pin?.spec.kind === 'poi') { activatePin(pin); return; }
+  } else if (pin?.spec.kind === 'poi' || pin?.spec.kind === 'hit') { activatePin(pin); return; }
   const bounds = canvas.getBoundingClientRect();
   selectMapTarget((event.clientX - bounds.left) / bounds.width * currentMap.width, (event.clientY - bounds.top) / bounds.height * currentMap.height);
 };
@@ -801,7 +918,7 @@ async function loadBlockIds () {
 byId('search').onsubmit = async event => {
   event.preventDefault(); byId('find').disabled = true; byId('result').textContent = 'Suche läuft …';
   clearSearchResults();
-  const controller = searchRequest = new AbortController();
+  const controller = searchRequest = new AbortController(); byId('search-reset').disabled = false;
   try {
     const query = new URLSearchParams({block:byId('block').value.trim(), limit:byId('limit').value});
     const response = await fetch('/api/blocks?' + query, { signal: controller.signal });
@@ -810,7 +927,7 @@ byId('search').onsubmit = async event => {
     if (result.coverage && result.coverage.session !== worldSession) throw new Error('Weltsitzung geändert; erneut suchen.');
     if (!response.ok) throw new Error(result.error);
     searchResult = result;
-    byId('map-hit-info').textContent = result.hits.length + ' Treffer der letzten Suche türkis markiert, auch unter der Oberfläche. Marker anklicken; bei Weltänderungen erneut suchen.';
+    byId('map-hit-info').textContent = result.hits.length + ' Treffer der letzten Suche mit ⛏️ markiert, auch unter der Oberfläche. Marker anklicken; bei Weltänderungen erneut suchen.';
     drawMap();
     const labels = {found:'Treffer gefunden', not_found:'Keine Treffer im vollständig bekannten Bereich', unknown:'Keine Treffer in bekannten Daten; Umgebung ist unvollständig'};
     byId('result').textContent = labels[result.outcome] + ': ' + result.hits.length + (result.limitReached ? ' (Trefferlimit erreicht)' : '') +
@@ -827,7 +944,11 @@ byId('search').onsubmit = async event => {
       byId('hits').append(row);
     }
   } catch (error) { if (searchRequest === controller) byId('result').textContent = error.message; }
-  finally { if (searchRequest === controller) { searchRequest = null; byId('find').disabled = false; } }
+  finally { if (searchRequest === controller) { searchRequest = null; byId('find').disabled = false; byId('search-reset').disabled = !searchResult; } }
+};
+// Reset aborts a running search and clears its results; block ID, limit and target stay.
+byId('search-reset').onclick = () => {
+  clearSearchResults(); byId('result').textContent = ''; byId('find').disabled = false;
 };
 // One toggle replaces the separate connect/disconnect buttons.
 let connectionCommand = 'connect';
@@ -895,6 +1016,13 @@ byId('skin-reconnect').onclick = async () => {
     byId('skin-feedback').textContent = 'Verbindet mit dem neuen Skin neu …';
   } catch (error) { byId('skin-feedback').textContent = 'Neu verbinden fehlgeschlagen: ' + error.message; }
 };
+// The chat starts collapsed on phones; from 1400px it is a left column that always stays open.
+const wideChat = globalThis.matchMedia?.('(min-width: 1400px)');
+if (wideChat) {
+  byId('chat-panel').open = !globalThis.matchMedia('(max-width: 900px)').matches;
+  wideChat.onchange = () => { if (wideChat.matches) byId('chat-panel').open = true; };
+}
+byId('chat-panel').ontoggle = () => { const log = byId('chat-log'); log.scrollTop = log.scrollHeight; };
 const events = new EventSource('/api/events');
 events.onmessage = event => {
   const state = JSON.parse(event.data);
@@ -902,6 +1030,7 @@ events.onmessage = event => {
   botStatus = state.status;
   if (state.skin) skinState = state.skin;
   renderSkin();
+  if (state.farm) { farmState = state.farm; renderFarm(); }
   byId('position').textContent = state.position ? Object.entries(state.position).map(([k,v])=>k+': '+v.toFixed(2)).join(' / ') + (state.positionSource === 'predicted' ? ' (Client-Prognose)' : ' (Server)') : 'Unbekannt';
   const nextDimension = dimensionNumber(state.dimension);
   if (archiveEnabled && followBot && nextDimension !== null && mapDimension !== nextDimension) {
@@ -940,6 +1069,9 @@ events.onmessage = event => {
   registryReady = Boolean(coverage?.ready);
   botPosition = state.position;
   players = Array.isArray(state.players) ? state.players : [];
+  renderPlayers(Array.isArray(state.roster) ? state.roster : [], state.status === 'spawned');
+  if (state.chatRevision !== chatRevision) { chatRevision = state.chatRevision; void loadChat(); }
+  if (state.inventoryRevision !== inventoryRevision) { inventoryRevision = state.inventoryRevision; void loadInventory(); }
   if (archiveEnabled && followBot && botPosition && view && !drag) {
     const x = Math.floor(botPosition.x - view.size / 2); const z = Math.floor(botPosition.z - view.size / 2);
     if (Math.abs(x - view.x) >= 16 || Math.abs(z - view.z) >= 16) {

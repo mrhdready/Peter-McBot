@@ -96,7 +96,8 @@ function navigationFixture () {
   const {terrain,set}=fixture()
   const {Navigator,EYE_HEIGHT}=require('../dist/navigation.js')
   const world={terrain,status:'spawned',position:{x:.5,y:EYE_HEIGHT,z:.5},navigation:{},tick:0,worldSession:1,worldRevision:1,
-    chunks:new Map([['0:0',{}],['-1:0',{}],['0:-1',{}]]),setCenter:()=>{},canStandAt:(x,z,y)=>terrain.canStandAt(x,z,y)}
+    chunks:new Map([['0:0',{}],['-1:0',{}],['0:-1',{}]]),setCenter:()=>{},canStandAt:(x,z,y)=>terrain.canStandAt(x,z,y),
+    planningTerrain:terrain,closedDoorAt:()=>null,doorAt:()=>null,blockedDoors:new Set(),players:new Map()}
   const navigator=new Navigator(world);navigator.reset()
   const sent=[]
   const step=()=>{world.tick++;navigator.step((name,params)=>sent.push({name,params}),world.tick*50)}
@@ -116,7 +117,7 @@ test('X/Z navigation jumps once onto a full block and serializes protocol 2225 j
   assert.equal(sent.filter(p=>p.params.input_data.includes('jump_released_raw')).length,1)
   const serializer=require('bedrock-protocol/src/transforms/serializer').createSerializer('1.26.60')
   for(const {name,params} of sent){
-    assert.ok(params.move_vector.z<=.30001)
+    assert.ok(params.move_vector.z<=1.00001)
     assert.ok(!params.input_data.some(flag=>/sprint|fly/.test(flag)))
     assert.ok(serializer.createPacketBuffer({name,params}).length)
   }

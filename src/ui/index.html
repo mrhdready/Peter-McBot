@@ -23,8 +23,8 @@
 <li><span class="legend-pin" aria-hidden="true">📌</span>Ziel</li>
 <li><span class="legend-pin" aria-hidden="true">📍</span>Ort</li>
 <li><span class="legend-pin" aria-hidden="true">🦊</span>Spieler</li>
+<li><span class="legend-pin" aria-hidden="true">⛏️</span>Treffer</li>
 <li><i class="legend-line"></i>Weg (gestrichelt: Vorschau)</li>
-<li><i style="background:#22d3ee"></i>Treffer</li>
 <li><i style="background:#202b40"></i>Unbekannt</li>
 <li><i style="background:repeating-linear-gradient(45deg,#d5ac50 0 2px,#858b92 2px 4px)"></i>Daten fehlen oben</li>
 <li><i style="background:#c5ccd3"></i>Historisch</li>
@@ -46,8 +46,8 @@
 <p id="nav-status" role="status">Navigation inaktiv.</p>
 </section>
 <!-- Saved places and navigation history. -->
-<section class="panel" id="places-panel" aria-labelledby="places-heading" hidden>
-<h2 id="places-heading">Orte</h2>
+<details class="panel" id="places-panel" open hidden>
+<summary><h2 id="places-heading">Orte</h2></summary>
 <div class="poi-fields"><label for="poi-name">Name</label><label for="poi-icon">Symbol</label>
 <input id="poi-name" maxlength="40" autocomplete="off" placeholder="z. B. Basis">
 <select id="poi-icon"><option value="star" selected>⭐ Sonstiges</option><option value="home">🏠 Basis</option><option value="mine">⛏️ Mine</option><option value="portal">🌀 Portal</option><option value="farm">🌾 Farm</option><option value="storage">📦 Lager</option></select></div>
@@ -58,13 +58,51 @@
 <h3>Zuletzt angesteuert</h3>
 <ul id="history-list" class="place-list" aria-label="Zuletzt angesteuerte Ziele"></ul>
 <p id="history-empty" class="hint">Noch keine Navigationsziele in dieser Dimension.</p>
-</section>
-<section class="panel" aria-labelledby="bot-heading">
-<h2 id="bot-heading">Bot</h2>
+</details>
+<details class="panel" open>
+<summary><h2 id="bot-heading">Bot</h2></summary>
 <dl class="facts"><dt>Position</dt><dd id="position">Unbekannt</dd><dt>Dimension</dt><dd id="dimension">Unbekannt</dd><dt>Chunks</dt><dd id="chunks">0</dd><dt>Herzschlag</dt><dd id="tick">0</dd><dt>Letzter Fehler</dt><dd id="error">—</dd></dl>
-</section>
+</details>
+<details class="panel" open>
+<summary><h2 id="search-heading">Blocksuche</h2></summary>
+<p id="coverage" aria-live="polite">Weltdaten noch unbekannt.</p>
+<form id="search"><label for="block">Block-ID</label><input id="block" name="block" value="minecraft:diamond_ore" list="block-ids" aria-describedby="block-hint" autocomplete="off" required maxlength="110"><datalist id="block-ids"></datalist>
+<p id="block-hint" class="hint" role="status">Blockvorschläge verfügbar, sobald die Registry geladen ist.</p>
+<div class="actions"><label for="limit">Max. Treffer</label><input id="limit" type="number" value="50" min="1" max="100" required>
+<button id="find" type="submit">Suchen</button><button id="search-reset" type="button" disabled>Zurücksetzen</button></div></form>
+<p id="result" role="status"></p>
+<p id="map-hit-info" role="status">⛏️: Treffer der letzten Blocksuche, auch unter der Oberfläche. Marker anklicken oder mit Pfeiltasten und Enter auswählen.</p>
+<div id="map-hit-options" aria-label="Treffer an der ausgewählten Kartenposition"></div>
+<div class="hits"><table><thead><tr><th scope="col">X</th><th scope="col">Y</th><th scope="col">Z</th><th scope="col">Entf.</th><th scope="col"><span class="visually-hidden">Aktion</span></th></tr></thead><tbody id="hits"></tbody></table></div>
+</details>
+<!-- Everyone online on the server; only players in entity range have a position. -->
+<details class="panel" open>
+<summary><h2 id="players-heading">Spieler (0)</h2></summary>
+<ul id="player-list" class="place-list" aria-label="Spieler auf dem Server"></ul>
+<p id="player-empty" class="hint">Nicht verbunden.</p>
+</details>
+<!-- The bot's own items, read-only; chat commands "inventory" and "give" use the same data. -->
+<details class="panel">
+<summary><h2 id="inventory-heading">Inventar (0)</h2></summary>
+<ul id="inventory-list" class="place-list" aria-label="Gegenstände im Inventar des Bots"></ul>
+<p id="inventory-empty" class="hint">Inventar unbekannt (nicht verbunden).</p>
+</details>
+<!-- Farming mode: harvests ripe crops around the anchor and replants them; chat "farming on|off" switches the same mode. -->
+<details class="panel farm" id="farm-panel" open>
+<summary><h2>Farm</h2></summary>
+<div class="skin-fields"><label for="farm-anchor">Anker</label><select id="farm-anchor"><option value="" selected>Aktuelle Bot-Position</option></select></div>
+<div class="actions"><button id="farm-toggle" class="primary" type="button">Farming starten</button></div>
+<p id="farm-status" role="status">Farming ist aus.</p>
+<p id="farm-feedback" role="status"></p>
+</details>
+<!-- Read-only chat log; from 1400px it becomes a fixed left column (CSS). The script opens it except below 900px. -->
+<details class="panel chat" id="chat-panel">
+<summary><h2 id="chat-heading">Chat</h2></summary>
+<div id="chat-log" class="chat-log" role="log" aria-labelledby="chat-heading"></div>
+<p id="chat-empty" class="hint">Noch keine Nachrichten.</p>
+</details>
 <details class="panel skin" id="skin-panel" hidden>
-<summary>Skin</summary>
+<summary><h2>Skin</h2></summary>
 <img id="skin-preview" class="skin-preview" alt="Gespeicherte Skin-Textur" width="128" height="128" hidden>
 <p id="skin-status" role="status">Standard-Skin.</p>
 <div class="skin-fields"><label for="skin-file">PNG-Datei (64×64 oder 64×32)</label><input id="skin-file" type="file" accept="image/png">
@@ -72,20 +110,8 @@
 <div class="actions"><button id="skin-upload" type="button">Hochladen</button><button id="skin-reset" type="button">Standard wiederherstellen</button><button id="skin-reconnect" class="primary" type="button" hidden>Jetzt neu verbinden</button></div>
 <p id="skin-feedback" role="status"></p>
 </details>
-<section class="panel" aria-labelledby="search-heading">
-<h2 id="search-heading">Blocksuche</h2>
-<p id="coverage" aria-live="polite">Weltdaten noch unbekannt.</p>
-<form id="search"><label for="block">Block-ID</label><input id="block" name="block" value="minecraft:diamond_ore" list="block-ids" aria-describedby="block-hint" autocomplete="off" required maxlength="110"><datalist id="block-ids"></datalist>
-<p id="block-hint" class="hint" role="status">Blockvorschläge verfügbar, sobald die Registry geladen ist.</p>
-<div class="actions"><label for="limit">Max. Treffer</label><input id="limit" type="number" value="50" min="1" max="100" required>
-<button id="find" type="submit">Suchen</button></div></form>
-<p id="result" role="status"></p>
-<p id="map-hit-info" role="status">Türkis: Treffer der letzten Blocksuche, auch unter der Oberfläche. Marker anklicken oder mit Pfeiltasten und Enter auswählen.</p>
-<div id="map-hit-options" aria-label="Treffer an der ausgewählten Kartenposition"></div>
-<div class="hits"><table><thead><tr><th scope="col">X</th><th scope="col">Y</th><th scope="col">Z</th><th scope="col">Entf.</th><th scope="col"><span class="visually-hidden">Aktion</span></th></tr></thead><tbody id="hits"></tbody></table></div>
-</section>
 <details class="panel help">
-<summary>Hilfe</summary>
+<summary><h2>Hilfe</h2></summary>
 <h3>Karte</h3>
 <p>Nord (−Z) oben, Ost (+X) rechts. Ziehen verschiebt die Karte, Mausrad oder +/− zoomt. Pfeiltasten lesen einzelne Zellen, Umschalt + Pfeiltasten verschiebt die Karte. Klick, Enter oder Leertaste übernimmt die Zelle als Ziel.</p>
 <p>Leicht vernebelte Flächen sind historische Beobachtungen und dienen nur der Orientierung; Navigation, Vorschau und Blocksuche nutzen ausschließlich aktuelle Weltdaten. Die Karte lädt bei neuen Chunks und nach der Ankunft automatisch nach.</p>
@@ -97,8 +123,13 @@
 <p>Stopp beendet den Vortrieb; eine laufende Sprung- oder Fallbewegung endet bei der Landung.</p>
 <h3>Skin</h3>
 <p>Ein eigener Skin (PNG, 64×64 oder 64×32) wird beim Verbinden einmal an den Server geschickt. Nach dem Hochladen gilt er erst ab der nächsten Verbindung; „Jetzt neu verbinden“ trennt und verbindet sofort. Ob andere Spieler ihn sehen, hängt auch von der Welteinstellung „Nur vertrauenswürdige Skins“ ab.</p>
+<h3>Chat</h3>
+<p>Chat-Befehle beginnen mit dem Namen des Bots, etwa „Peter inventory“ (kurz „inv“) oder „Peter give dirt 5“. „give“ läuft zum Absender und wirft ihm das Item zu; ohne Anzahl alles davon. „Inventar“ zeigt dieselben Daten.</p>
+<p>Zeigt die letzten 100 Chatzeilen anderer Spieler, Flüstern an den Bot (kursiv) und die Antworten des Bots auf Chat-Befehle. Graue Zeilen markieren Verbinden und Trennen. Der Verlauf liegt nur im Speicher und ist nach einem Neustart des Bots leer. Aus der Oberfläche kann nicht geschrieben werden.</p>
+<h3>Farm</h3>
+<p>„Farming starten“ erntet reifen Weizen, Karotten und Kartoffeln im Umkreis von bis zu 24 Blöcken um den Anker, sammelt die Drops ein und pflanzt dieselbe Frucht neu. Etwa alle 30 Sekunden sucht der Bot erneut. Was über dem Vorrat (64 Weizensamen, 16 Karotten, 16 Kartoffeln) liegt, kommt in die nächste Kiste im Bereich; Weizen und giftige Kartoffeln immer. Chat-Befehle wie „go“ oder „come“ pausieren das Farmen für eine Minute, eine Navigation aus der Oberfläche und „Stopp“ beenden es. Im Chat: „Peter farming on [Wegpunkt]“, „farming once“, „farming off“, „farming“ (Status).</p>
 <h3>Blocksuche</h3>
-<p>Treffer werden türkis markiert, auch unter der Oberfläche. „Ziel“ in der Trefferliste übernimmt X/Z als Navigationsziel. Bei Weltänderungen erneut suchen.</p>
+<p>Treffer werden mit ⛏️ markiert, auch unter der Oberfläche. „Zurücksetzen“ entfernt sie wieder. „Ziel“ in der Trefferliste übernimmt X/Z als Navigationsziel. Bei Weltänderungen erneut suchen.</p>
 </details>
 </aside>
 </main>

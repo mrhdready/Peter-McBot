@@ -18,9 +18,15 @@ type SurfaceMap = {
   palette: string[]; cells: Array<[number, number | null, boolean] | null>;
   coverage: ReturnType<ChunkWorld['coverage']>; stale: boolean
 }
+const doorKey = (p: Position) => p.x + ':' + p.y + ':' + p.z
 export class WorldError extends Error {
   constructor (message: string, readonly status = 400) { super(message) }
 }
+
+/** Crops the farming mode harvests; each has only the `growth` state (0..7, ripe at 7) in minecraft-data 1.26.60. */
+export const CROP_KINDS = ['wheat', 'carrots', 'potatoes'] as const
+export type CropKind = typeof CROP_KINDS[number]
+export const RIPE_GROWTH = 7
 
 export function dimensionId (dimension: number | string | null): number | null {
   if (typeof dimension === 'number' && [0, 1, 2].includes(dimension)) return dimension
@@ -43,7 +49,17 @@ export class ChunkWorld {
   private walkFlags = new Uint8Array()
   private collisionIds = new Int32Array()
   private collisionShapes: Record<number, Box[]> = {}
+  private doorToggle = new Int32Array()
+  private doorOpen = new Uint8Array()
+  private doorHalf = new Uint8Array()
+  private runtimeIds = new Map<number, number>()
   readonly terrain = new Terrain((x, y, z) => this.collisionAt(x, y, z))
+  // When true, routes may pass closed hand-openable doors and fence gates; navigation opens them on the way.
+  openDoors = true
+  // Doors that did not open during the current navigation ("x:y:z"); planning treats them as closed walls.
+  readonly blockedDoors = new Set<string>()
+  // Terrain for route planning: closed openable doors count as open unless disabled or blocked.
+  readonly planningTerrain = new Terrain((x, y, z) => this.collisionAt(x, y, z, this.openDoors))
   private mapCache: { key: string; data: SurfaceMap } | null = null
   private mapping = false
   private runtime = new Map<number, number>()
@@ -71,6 +87,11 @@ export class ChunkWorld {
     this.walkFlags = new Uint8Array()
     this.collisionIds = new Int32Array()
     this.collisionShapes = {}
+    this.doorToggle = new Int32Array()
+    this.doorOpen = new Uint8Array()
+    this.doorHalf = new Uint8Array()
+    this.runtimeIds.clear()
+    this.blockedDoors.clear()
     this.mapCache = null
     this.worldDimension = null
     this.center = null
@@ -93,12 +114,15 @@ export class ChunkWorld {
         this.walkFlags = message.walkFlags
         this.collisionIds = message.collisionIds
         this.collisionShapes = message.collisionShapes
+        this.doorToggle = message.doorToggle
+        this.doorOpen = message.doorOpen
+        this.doorHalf = message.doorHalf
         for (const [name, block] of Object.entries(this.blocks!)) {
           for (let id = block.min; id <= block.max; id++) this.stateNames[id] = name
         }
         this.air = message.air
         const pairs = message.runtimePairs as Uint32Array
-        for (let i = 0; i < pairs.length; i += 2) this.runtime.set(pairs[i], pairs[i + 1])
+        for (let i = 0; i < pairs.length; i += 2) { this.runtime.set(pairs[i], pairs[i + 1]); this.runtimeIds.set(pairs[i + 1], pairs[i]) }
       } else {
         this.jobs.delete(message.id)
         for (const column of this.chunks.values()) for (const [y, request] of column.requests) {
@@ -327,14 +351,126 @@ export class ChunkWorld {
     return column ? this.surfaceCells(column) : null
   }
 
-  private collisionAt (x: number, y: number, z: number): CollisionCell | null {
+  private stateAt (x: number, y: number, z: number, layer = 0): number | null {
+    if (!this.blocks) return null
+    const section = this.chunks.get(Math.floor(x / 16) + ':' + Math.floor(z / 16))?.sections.get(Math.floor(y / 16))
+    if (!section) return null
+    return section.data?.[layer * 4096 + ((x & 15) << 8) + ((y & 15) << 4) + (z & 15)] ?? this.air
+  }
+
+  // Block state at (x, y, z), with an upper door half replaced by the lower half below it, which holds facing and open state.
+  private doorBase (x: number, y: number, z: number): { y: number; id: number } | null {
+    const id = this.stateAt(x, y, z)
+    if (id === null || this.doorHalf[id] !== 2) return id === null ? null : { y, id }
+    const below = this.stateAt(x, y - 1, z)
+    return below !== null && this.doorHalf[below] === 1 ? { y: y - 1, id: below } : { y, id }
+  }
+
+  /** Network runtime ID of the block state at (x, y, z), or null while unknown. */
+  blockRuntimeIdAt (x: number, y: number, z: number): number | null {
+    const id = this.stateAt(x, y, z)
+    return id === null ? null : this.runtimeIds.get(id) ?? null
+  }
+
+  /** Block name ("minecraft:…") at (x, y, z) on layer 0, or null while unknown. */
+  blockNameAt (x: number, y: number, z: number): string | null {
+    const id = this.stateAt(x, y, z)
+    return id === null ? null : this.stateNames[id] ?? null
+  }
+
+  /** The crop at (x, y, z) and its growth 0..7, or null. `growth` is a crop's only state, so it is the offset in its state range. */
+  cropAt (x: number, y: number, z: number): { kind: CropKind; growth: number } | null {
+    const id = this.stateAt(x, y, z)
+    if (id === null || !this.blocks) return null
+    for (const kind of CROP_KINDS) {
+      const range = this.blocks['minecraft:' + kind]
+      if (range && id >= range.min && id <= range.max) return { kind, growth: id - range.min }
+    }
+    return null
+  }
+
+  /**
+   * Ripe crops (growth 7) whose column lies within `radius` blocks horizontally of `anchor`, nearest first (at most 256).
+   * Scans only the loaded sections that touch the area; unknown sections simply yield nothing.
+   */
+  async ripeCrops (anchor: Position, radius: number, signal?: AbortSignal): Promise<Array<Position & { kind: CropKind }>> {
+    if (!this.blocks) throw new WorldError('World data is not ready', 409)
+    const ripe = new Map<number, CropKind>()
+    for (const kind of CROP_KINDS) { const range = this.blocks['minecraft:' + kind]; if (range) ripe.set(range.min + RIPE_GROWTH, kind) }
+    const generation = this.generation
+    const found: Array<Position & { kind: CropKind; distance: number }> = []
+    const near = (from: number, to: number, value: number) => Math.max(from - value, 0, value - to)
+    for (const column of [...this.chunks.values()]) {
+      if (Math.hypot(near(column.x * 16, column.x * 16 + 16, anchor.x), near(column.z * 16, column.z * 16 + 16, anchor.z)) > radius) continue
+      for (const [sectionY, section] of [...column.sections]) {
+        if (!section.data) continue
+        await yieldLoop()
+        if (signal?.aborted) throw new WorldError('Search cancelled', 499)
+        if (this.generation !== generation) throw new WorldError('World changed; repeat search', 409)
+        for (let i = 0; i < 4096; i++) {
+          const kind = ripe.get(section.data[i])
+          if (!kind) continue
+          const x = column.x * 16 + (i >>> 8); const y = sectionY * 16 + ((i >>> 4) & 15); const z = column.z * 16 + (i & 15)
+          const distance = Math.hypot(x + .5 - anchor.x, z + .5 - anchor.z)
+          if (distance <= radius) found.push({ x, y, z, kind, distance })
+        }
+      }
+    }
+    found.sort((a, b) => a.distance - b.distance || a.x - b.x || a.z - b.z || a.y - b.y)
+    return found.slice(0, 256).map(({ x, y, z, kind }) => ({ x, y, z, kind }))
+  }
+
+  // A hand-openable door or fence gate in block (x, y, z), resolved to its lower half: position, open state and network runtime ID.
+  doorAt (x: number, y: number, z: number): { position: Position; open: boolean; runtimeId: number } | null {
+    const base = this.doorBase(x, y, z)
+    if (!base || !(this.doorToggle[base.id] >= 0)) return null
+    const runtimeId = this.runtimeIds.get(base.id)
+    return runtimeId === undefined ? null : { position: { x, y: base.y, z }, open: this.doorOpen[base.id] === 1, runtimeId }
+  }
+
+  // The closed, openable door or gate a player standing at (x, feetY, z) would occupy (feet first, then head),
+  // or null. Disabled door opening and doors blocked for this navigation count as none.
+  closedDoorAt (x: number, z: number, feetY: number): Position | null {
+    if (!this.openDoors) return null
+    const bx = Math.floor(x); const bz = Math.floor(z); const foot = Math.floor(feetY + 1e-4)
+    for (const by of [foot, foot + 1]) {
+      const door = this.doorAt(bx, by, bz)
+      if (!door) continue
+      return !door.open && !this.blockedDoors.has(doorKey(door.position)) ? door.position : null
+    }
+    return null
+  }
+
+  // Diagnostics: every door or fence gate block within `radius` columns and feet-1..feet+2, with state ID,
+  // door flags and collision boxes as walked (real) and as planned (doors assumed open).
+  describeDoors (x: number, z: number, feetY: number, radius = 8): string[] {
+    const lines: string[] = []; const foot = Math.floor(feetY + 1e-4)
+    for (let bx = Math.floor(x) - radius; bx <= Math.floor(x) + radius; bx++) for (let bz = Math.floor(z) - radius; bz <= Math.floor(z) + radius; bz++) {
+      for (let by = foot - 1; by <= foot + 2; by++) {
+        const id = this.stateAt(bx, by, bz)
+        if (id === null || !/door$|fence_gate$/.test(this.stateNames[id] ?? '')) continue
+        const boxes = (cell: CollisionCell | null) => cell ? JSON.stringify(cell.boxes.map(b => b.map(n => +n.toFixed(3)))) : 'unbekannt'
+        lines.push(`${this.stateNames[id]} #${id} (${bx}, ${by}, ${bz}) Hälfte ${this.doorHalf[id]} Gegenstück ${this.doorToggle[id]} offen ${this.doorOpen[id]} ` +
+          `Laufen ${boxes(this.collisionAt(bx, by, bz))} Planung ${boxes(this.collisionAt(bx, by, bz, this.openDoors))} gesperrt ${this.blockedDoors.has(bx + ':' + by + ':' + bz)}`)
+      }
+    }
+    return lines
+  }
+
+  private collisionAt (x: number, y: number, z: number, assumeOpen = false): CollisionCell | null {
     if (!this.blocks) return null
     const section = this.chunks.get(Math.floor(x / 16) + ':' + Math.floor(z / 16))?.sections.get(Math.floor(y / 16))
     if (!section) return null
     const index = ((x & 15) << 8) + ((y & 15) << 4) + (z & 15)
     const boxes: Box[] = []; let support = false
     for (let layer = 0; layer < 2; layer++) {
-      const id = section.data?.[layer * 4096 + index] ?? this.air
+      let id = section.data?.[layer * 4096 + index] ?? this.air
+      let baseY = y
+      if (layer === 0 && this.doorHalf[id] === 2) {
+        const base = this.doorBase(x, y, z)
+        if (base) { id = base.id; baseY = base.y }
+      }
+      if (assumeOpen && layer === 0 && this.doorToggle[id] >= 0 && !this.doorOpen[id] && !this.blockedDoors.has(x + ':' + baseY + ':' + z)) id = this.doorToggle[id]
       const shape = this.collisionIds[id]
       if (shape === undefined || shape < 0 || !this.collisionShapes[shape]) return null
       boxes.push(...this.collisionShapes[shape])
@@ -387,14 +523,23 @@ export class ChunkWorld {
     } finally { this.mapping = false }
   }
 
-  async searchBlocks (blockId: string, limit: number, position: Position | null, signal?: AbortSignal) {
-    if (!/^(minecraft:)?[a-z0-9_]{1,100}$/.test(blockId)) throw new WorldError('Invalid block ID')
+  // One block ID or a list of them; a hit is any block whose state belongs to one of the IDs.
+  async searchBlocks<T extends string | string[]> (blockId: T, limit: number, position: Position | null, signal?: AbortSignal) {
+    const ids = ([] as string[]).concat(blockId)
+    if (!ids.length || ids.some(id => !/^(minecraft:)?[a-z0-9_]{1,100}$/.test(id))) throw new WorldError('Invalid block ID')
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new WorldError('Limit must be 1..100')
     if (!this.blocks || !position) throw new WorldError('World data is not ready', 409)
     if (this.searching) throw new WorldError('A search is already running', 429)
-    const canonical = blockId.startsWith('minecraft:') ? blockId : 'minecraft:' + blockId
-    const block = this.blocks[canonical]
-    if (!block) throw new WorldError('Unknown block ID: ' + canonical)
+    const canonicals = ids.map(id => id.startsWith('minecraft:') ? id : 'minecraft:' + id)
+    const ranges: BlockInfo[] = []
+    for (const name of canonicals) {
+      const block = this.blocks[name]
+      if (!block) throw new WorldError('Unknown block ID: ' + name)
+      ranges.push(block)
+    }
+    // The result names the IDs as given: one canonical string, or the canonical list.
+    const canonical = (Array.isArray(blockId) ? canonicals : canonicals[0]) as T
+    const matches = (id: number) => ranges.some(range => id >= range.min && id <= range.max)
     const origin = { ...position }; const generation = this.generation; const revision = this.revision
     const coverage = this.coverage()
     const sections = [...this.chunks.values()].flatMap(column => [...column.sections].map(([y, section]) => ({ x: column.x, z: column.z, y, ...section })))
@@ -404,13 +549,13 @@ export class ChunkWorld {
     }
     sections.sort((a, b) => distanceToSection(a) - distanceToSection(b))
     const hits: Array<Position & { distance: number }> = []
-    let matches = 0
+    let found = 0
     const compare = (a: Position & { distance: number }, b: Position & { distance: number }) => a.distance - b.distance || a.x - b.x || a.y - b.y || a.z - b.z
     this.searching = true
     try {
       for (const section of sections) {
         if (hits.length === limit && distanceToSection(section) > hits[limit - 1].distance ** 2 + 1e-8) continue
-        if (section.data === null && !(this.air >= block.min && this.air <= block.max)) continue
+        if (section.data === null && !matches(this.air)) continue
         for (let i = 0; i < 4096; i++) {
           if ((i & 511) === 0) {
             await yieldLoop()
@@ -418,8 +563,8 @@ export class ChunkWorld {
             if (this.generation !== generation) throw new WorldError('World changed; repeat search', 409)
           }
           const a = section.data?.[i] ?? this.air; const b = section.data?.[4096 + i] ?? this.air
-          if (!((a >= block.min && a <= block.max) || (b !== this.air && b >= block.min && b <= block.max))) continue
-          matches++
+          if (!(matches(a) || (b !== this.air && matches(b)))) continue
+          found++
           const x = section.x * 16 + (i >>> 8); const y = section.y * 16 + ((i >>> 4) & 15); const z = section.z * 16 + (i & 15)
           const hit = { x, y, z, distance: Math.hypot(x - origin.x, y - origin.y, z - origin.z) }
           if (hits.length === limit && compare(hit, hits[limit - 1]) >= 0) continue
@@ -427,7 +572,7 @@ export class ChunkWorld {
           if (hits.length > limit) hits.pop()
         }
       }
-      return { blockId: canonical, origin, hits, limit, limitReached: matches >= limit, coverage, stale: this.revision !== revision,
+      return { blockId: canonical, origin, hits, limit, limitReached: found >= limit, coverage, stale: this.revision !== revision,
         outcome: hits.length ? 'found' : coverage.complete ? 'not_found' : 'unknown' }
     } finally { this.searching = false }
   }

@@ -62,7 +62,11 @@ input { min-width: 0; width: 100%; }
 .pin-pushpin { transform: translate(-25%, -90%); }
 .pin-center { transform: translate(-50%, -50%); }
 /* Players sit in a small round chip so they read as creatures, not markers. */
-.pin-player { padding: .15rem; font-size: 1.05rem; border-radius: 50%; background: rgb(17 24 39 / .8); box-shadow: 0 0 0 1px rgb(255 255 255 / .55); }
+.pin-player { display: flex; align-items: center; justify-content: center; box-sizing: border-box; width: 1.6rem; height: 1.6rem; font-size: 1.05rem;
+  border-radius: 50%; background: rgb(17 24 39 / .8); box-shadow: 0 0 0 1px rgb(255 255 255 / .55); }
+/* Search hits can number up to 100, so they are smaller; the selected one gets a white ring. */
+.pin-hit { font-size: 1.1rem; border-radius: 50%; }
+.pin-hit.selected { background: rgb(17 24 39 / .8); box-shadow: 0 0 0 2px #fff; }
 .pin:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .pin-overlay { position: absolute; z-index: 3; margin: 0; max-width: 15rem; padding: .4rem .6rem; font-size: .85rem; white-space: pre-line;
   background: rgb(17 24 39 / .92); border: 1px solid var(--border-strong); border-radius: var(--radius); cursor: pointer; }
@@ -96,13 +100,35 @@ table { border-collapse: collapse; width: 100%; font-size: .9rem; }
 th { position: sticky; top: 0; background: var(--surface); }
 th, td { text-align: left; padding: .35rem .4rem; border-bottom: 1px solid var(--border); }
 td button { padding: .15rem .5rem; font-size: .85rem; }
-.help summary { cursor: pointer; font-weight: 600; }
+/* Collapsible panels: the heading sits in the summary next to the disclosure arrow. */
+details.panel > summary { cursor: pointer; }
+details.panel > summary h2 { display: inline; margin: 0; }
+details.panel[open] > summary { margin-bottom: .6rem; }
 .help p { font-size: .9rem; color: var(--muted); }
-.skin summary { cursor: pointer; font-weight: 600; }
+.player-far { color: var(--muted); }
 .skin-preview { display: block; margin: .6rem 0 .3rem; image-rendering: pixelated; background: var(--border); border-radius: 4px; }
 .skin-fields { display: grid; grid-template-columns: auto 1fr; gap: .4rem .6rem; align-items: center; margin-top: .4rem; }
 .skin-fields input, .skin-fields select { min-width: 0; }
 .skin .actions { flex-wrap: wrap; }
+.chat-log { max-height: 18rem; overflow-y: auto; font-size: .9rem; overflow-wrap: anywhere; }
+.chat-line { padding: .1rem 0; }
+.chat-time { color: var(--muted); font-size: .8rem; }
+.chat-name { font-weight: 600; }
+.chat-whisper { font-style: italic; }
+.chat-bot { color: var(--accent); }
+.chat-event { color: var(--muted); font-size: .8rem; text-align: center; }
+
+/* Wide screens have room beside the square map: the chat leaves the sidebar and becomes a full-height left column. */
+@media (min-width: 1400px) {
+  .layout { position: relative; grid-template-columns: var(--chat) minmax(0, 1fr) var(--sidebar); --chat: 20rem; }
+  .map-area { grid-column: 2; }
+  #sidebar { grid-column: 3; }
+  #chat-panel { position: absolute; top: .75rem; bottom: .75rem; left: .75rem; width: calc(var(--chat) - .75rem); }
+  #chat-panel > summary { pointer-events: none; list-style: none; }
+  #chat-panel > summary::-webkit-details-marker { display: none; }
+  /* Positioned against the panel, because a <details> body cannot stretch to the panel height. */
+  #chat-panel .chat-log { position: absolute; top: 2.9rem; bottom: .8rem; left: .8rem; right: .8rem; max-height: none; }
+}
 
 @media (max-width: 900px) {
   body { display: block; height: auto; padding-bottom: 7.5rem; }

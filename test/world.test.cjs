@@ -47,6 +47,12 @@ test('real hashed subchunk produces nearest block coordinates across negative ch
   }
   expected.sort((a, b) => a.distance - b.distance || a.x - b.x || a.y - b.y || a.z - b.z)
   assert.deepEqual(result.hits, expected.slice(0, 5))
+  // A list of IDs finds any of them and names the list in the result; an unknown ID in the list is still an error.
+  const either = await world.searchBlocks(['diamond_ore', 'minecraft:iron_ore'], 5, world.position)
+  assert.deepEqual(either.blockId, ['minecraft:diamond_ore', 'minecraft:iron_ore'])
+  assert.deepEqual(either.hits, expected.slice(0, 5))
+  await assert.rejects(world.searchBlocks(['iron_ore', 'unknown_block'], 5, world.position), /Unknown block/)
+  await assert.rejects(world.searchBlocks([], 5, world.position), /Invalid/)
   assert.equal((await world.searchBlocks('diamond_ore', 10, world.position)).outcome, 'unknown')
   const air = await world.searchBlocks('air', 100, world.position)
   assert.ok(air.hits.every(hit => decoded.getBlockStateId({ x: hit.x + 16, y: hit.y, z: hit.z + 16 }) === registry.blocksByName.air.defaultState))
