@@ -50,7 +50,7 @@ node --env-file=.env dist/main.js
 
 Die Weboberfläche bindet standardmäßig an `127.0.0.1:3000`. `.env` wird nur mit `--env-file` geladen; `pnpm start` verwendet die vorhandene Prozessumgebung.
 
-Neben der Überschrift steht der Build-Commit als `@abcdef1`. `pnpm build` ermittelt den aktuellen Git-Hash und speichert ihn in `dist/ui/version.txt`. GitHub Actions und die Arcane-Vorbereitung übergeben ihn automatisch an den Docker-Build. Für einen manuellen Docker-Build: `docker build --build-arg BUILD_REVISION="$(git rev-parse HEAD)" -t mc-bot .`. Ohne Git oder übergebenen Hash erscheint `@unknown`. Lokale Änderungen ohne Commit behalten dieselbe Kennung; die Anzeige aktualisiert sich nach Build und Neustart.
+Neben der Überschrift steht die Version aus `src/ui/version.txt`, zum Beispiel `@0.1.0`. Für einen neuen Stand die Nummer in dieser Datei ändern. `pnpm build` kopiert sie nach `dist/ui/version.txt`; Docker und die Arcane-Vorbereitung übernehmen sie ebenfalls. Die Anzeige aktualisiert sich nach Build und Neustart. Die Nummer wird manuell gepflegt.
 
 ## Docker und Arcane
 

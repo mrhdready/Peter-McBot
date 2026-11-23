@@ -1,5 +1,5 @@
 /*
- * Farming mode: harvests ripe wheat, carrots and potatoes (growth 7) around an anchor, collects the drops,
+ * Farming mode: harvests ripe wheat, carrots, potatoes and beetroot (growth 7) around an anchor, collects the drops,
  * replants the harvested spots with the same crop and stores the surplus in the nearest chest.
  *
  * The round is an async loop that only the bot's 20-Hz tick advances: every wait is a promise that `step()`
@@ -24,12 +24,12 @@ type Spot = Position & { kind: CropKind }
 type Stand = { x: number; z: number; feetY: number }
 
 /** Crop → the item that plants it. */
-export const CROPS: Record<CropKind, string> = { wheat: 'wheat_seeds', carrots: 'carrot', potatoes: 'potato' }
+export const CROPS: Record<CropKind, string> = { wheat: 'wheat_seeds', carrots: 'carrot', potatoes: 'potato', beetroot: 'beetroot_seeds' }
 /** Seeds and fruits the bot keeps for replanting; everything above goes into a chest. */
-export const RESERVE: Record<string, number> = { wheat_seeds: 64, carrot: 16, potato: 16 }
-/** Harvest items that are stored: wheat and poisonous potatoes always, the others above their reserve. */
-export const DEPOSIT = ['wheat', 'poisonous_potato', 'wheat_seeds', 'carrot', 'potato']
-const CROP_LABELS: Record<CropKind, string> = { wheat: 'Weizen', carrots: 'Karotten', potatoes: 'Kartoffeln' }
+export const RESERVE: Record<string, number> = { wheat_seeds: 64, carrot: 16, potato: 16, beetroot_seeds: 64 }
+/** Harvest items that are stored: wheat, beetroot and poisonous potatoes always, the others above their reserve. */
+export const DEPOSIT = ['wheat', 'poisonous_potato', 'wheat_seeds', 'carrot', 'potato', 'beetroot', 'beetroot_seeds']
+const CROP_LABELS: Record<CropKind, string> = { wheat: 'Weizen', carrots: 'Karotten', potatoes: 'Kartoffeln', beetroot: 'Rote Bete' }
 export const FARM_RADIUS = 24
 const SCAN_MS = 30000
 export const PAUSE_MS = 60000
@@ -256,7 +256,7 @@ export class Farmer {
       if (status !== 'arrived') return this.problem('anchor', `Ich komme nicht zum Farm-Anker ${anchor.label}.`)
     }
     this.reported.delete('anchor')
-    const tally: Tally = { harvested: { wheat: 0, carrots: 0, potatoes: 0 }, planted: 0, unplanted: 0 }
+    const tally: Tally = { harvested: { wheat: 0, carrots: 0, potatoes: 0, beetroot: 0 }, planted: 0, unplanted: 0 }
     // Spots left without seed earlier come first, as long as a seed is there now.
     if (this.unplanted.length) {
       const waiting = this.unplanted.splice(0)
@@ -424,7 +424,7 @@ export class Farmer {
 
   // ---- chests ----
 
-  /** Harvest items above the reserve (wheat and poisonous potatoes count fully). */
+  /** Harvest items above the reserve (wheat, beetroot and poisonous potatoes count fully). */
   private surplus (slots = this.host.state.inventory.slotList()) {
     return DEPOSIT.reduce((sum, name) => sum + Math.max(0, this.count(slots, name) - (RESERVE[name] ?? 0)), 0)
   }

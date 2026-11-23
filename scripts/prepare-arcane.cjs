@@ -1,7 +1,6 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const root = path.resolve(__dirname, '..')
-const { buildRevision } = require('./build-ui.cjs')
 const target = path.join(root, 'deploy/arcane')
 const host = process.env.BEDROCK_HOST
 if (!host) throw new Error('BEDROCK_HOST is required; load config/arcane.env with node --env-file')
@@ -17,9 +16,6 @@ for (const name of ['Dockerfile', '.dockerignore', 'package.json', 'pnpm-lock.ya
 for (const name of ['arcane-mcp.json', 'container-test.cjs']) {
   fs.copyFileSync(path.join(root, 'deploy/arcane-template', name), path.join(target, name))
 }
-fs.mkdirSync(path.join(target, 'scripts'), { recursive: true })
-fs.copyFileSync(path.join(root, 'scripts/build-ui.cjs'), path.join(target, 'scripts/build-ui.cjs'))
-const buildArgs = { BUILD_REVISION: buildRevision() }
 fs.mkdirSync(path.join(target, 'test'), { recursive: true })
 fs.copyFileSync(path.join(root, 'test/terrain.test.cjs'), path.join(target, 'test/terrain.test.cjs'))
 fs.writeFileSync(path.join(target, 'Dockerfile.test'), fs.readFileSync(path.join(root, 'Dockerfile'), 'utf8') + '\n' + fs.readFileSync(path.join(root, 'deploy/arcane-template/Dockerfile.test'), 'utf8'))
@@ -27,7 +23,7 @@ fs.writeFileSync(path.join(target, 'Dockerfile.test'), fs.readFileSync(path.join
 const compose = {
   services: {
     bot: {
-      build: { context: '.', args: buildArgs }, cpus: 0.5, mem_limit: '256m', restart: 'unless-stopped',
+      build: '.', cpus: 0.5, mem_limit: '256m', restart: 'unless-stopped',
       ports: [3000],
       environment: {
         BEDROCK_HOST: host, BEDROCK_PORT: process.env.BEDROCK_PORT || '19132', BEDROCK_VERSION: process.env.BEDROCK_VERSION || '1.26.60',
@@ -41,7 +37,7 @@ const compose = {
         interval: '5s', timeout: '3s', retries: 12
       }
     },
-    test: { build: { context: '.', dockerfile: 'Dockerfile.test', args: buildArgs }, cpus: 0.25, mem_limit: '128m' }
+    test: { build: { context: '.', dockerfile: 'Dockerfile.test' }, cpus: 0.25, mem_limit: '128m' }
   },
   volumes: { 'bot-identity': {} }
 }

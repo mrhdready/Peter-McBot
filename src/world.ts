@@ -24,7 +24,7 @@ export class WorldError extends Error {
 }
 
 /** Crops the farming mode harvests; each has only the `growth` state (0..7, ripe at 7) in minecraft-data 1.26.60. */
-export const CROP_KINDS = ['wheat', 'carrots', 'potatoes'] as const
+export const CROP_KINDS = ['wheat', 'carrots', 'potatoes', 'beetroot'] as const
 export type CropKind = typeof CROP_KINDS[number]
 export const RIPE_GROWTH = 7
 

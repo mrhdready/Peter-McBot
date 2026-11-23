@@ -11,7 +11,7 @@ const flush = () => new Promise(resolve => setImmediate(resolve))
 const item = (networkId, count, stackId) => ({ network_id: networkId, count, metadata: 0, has_stack_id: true, stack_id: stackId, block_runtime_id: 0, extra: { has_nbt: false, can_place_on: [], can_destroy: [] } })
 
 // A bot on a flat floor (y=70, feet at 71) with stubbed crops. The fake server breaks a ripe crop on stop_break (and drops
-// the queued items), hands drops to the bot when an input packet stands on their column, and grows wheat after a top-face click.
+// the queued items), hands drops to the bot when an input packet stands on their column, and plants the held seed after a top-face click.
 function setup (t, { inventory = [item(300, 5, 11)] } = {}) {
   let time = 1000
   const crops = new Map()
@@ -38,7 +38,7 @@ function setup (t, { inventory = [item(300, 5, 11)] } = {}) {
         }
       }
       const data = name === 'inventory_transaction' ? params.transaction.transaction_data : null
-      if (data?.action_type === 'click_block' && data.face === 1) crops.set(key(data.block_position.x, data.block_position.y + 1, data.block_position.z), { kind: 'wheat', growth: 0 })
+      if (data?.action_type === 'click_block' && data.face === 1) crops.set(key(data.block_position.x, data.block_position.y + 1, data.block_position.z), { kind: data.held_item.network_id === 303 ? 'beetroot' : 'wheat', growth: 0 })
     }
     close () { this.emit('close') }
   }
@@ -49,7 +49,7 @@ function setup (t, { inventory = [item(300, 5, 11)] } = {}) {
   const client = clients[0]
   client.emit('start_game', { player_position: { x: .5, y: 72.62, z: .5 }, dimension: 0 })
   client.emit('spawn')
-  client.emit('item_registry', { itemstates: [{ name: 'minecraft:wheat_seeds', runtime_id: 300 }, { name: 'minecraft:wheat', runtime_id: 301 }, { name: 'minecraft:dirt', runtime_id: 302 }] })
+  client.emit('item_registry', { itemstates: [{ name: 'minecraft:wheat_seeds', runtime_id: 300 }, { name: 'minecraft:wheat', runtime_id: 301 }, { name: 'minecraft:dirt', runtime_id: 302 }, { name: 'minecraft:beetroot_seeds', runtime_id: 303 }, { name: 'minecraft:beetroot', runtime_id: 304 }] })
   client.emit('inventory_content', { window_id: 'inventory', input: Array.from({ length: 36 }, (_, i) => inventory[i] ?? { network_id: 0 }) })
   bot.state.terrain = new Terrain((x, y, z) => Math.abs(x) < 10 && Math.abs(z) < 10 ? { boxes: y === 70 ? [[0, 0, 0, 1, 1, 1]] : [], support: y === 70 } : null)
   bot.state.planningTerrain = bot.state.terrain
@@ -159,4 +159,23 @@ test('a disconnect ends the running action but keeps farming on; it continues af
   client.emit('inventory_content', { window_id: 'inventory', input: Array.from({ length: 36 }, (_, i) => i === 0 ? item(300, 5, 11) : { network_id: 0 }) })
   crops.clear()
   assert.ok(await run(() => scans() === 2, 20), 'Farming resumes after the spawn without waiting for the scan interval')
+})
+
+test('beetroot is replanted with its seeds and counts only seeds above 64 plus all fruit as surplus', async t => {
+  const { bot, client, crops, reports, run } = setup(t, { inventory: [item(303, 64, 11), item(303, 1, 12), item(304, 8, 13)] })
+  crops.set(key(1, 71, 1), { kind: 'beetroot', growth: 7 })
+  crops.set(key(2, 71, 1), { kind: 'beetroot', growth: 3 })
+  bot.farm.start({ x: .5, z: .5, label: 'Bot' }, true)
+  assert.ok(await run(() => !bot.farm.status().enabled))
+  assert.deepEqual(crops.get(key(1, 71, 1)), { kind: 'beetroot', growth: 0 })
+  assert.deepEqual(crops.get(key(2, 71, 1)), { kind: 'beetroot', growth: 3 })
+  assert.ok(reports.includes('1 Rote Bete geerntet, 1 neu gepflanzt.'))
+  const click = client.sent.find(([name]) => name === 'inventory_transaction')[1].transaction.transaction_data
+  assert.equal(click.held_item.network_id, 303)
+  const { RESERVE, DEPOSIT } = require('../dist/farming.js')
+  assert.equal(RESERVE.beetroot_seeds, 64)
+  assert.equal(RESERVE.beetroot, undefined)
+  assert.ok(DEPOSIT.includes('beetroot_seeds'))
+  assert.ok(DEPOSIT.includes('beetroot'))
+  assert.equal(bot.farm.surplus(), 9, 'Eight fruit and one seed above the reserve may be stored')
 })

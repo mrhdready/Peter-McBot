@@ -583,6 +583,25 @@ test('cropAt reads crop growth, blockNameAt names blocks and ripeCrops finds rip
   assert.deepEqual(await world.ripeCrops({ x: .5, y: 72, z: .5 }, 3), [{ x: 1, y: 71, z: 0, kind: 'wheat' }])
 })
 
+test('beetroot growth 3 stays immature and growth 7 is found as ripe', async t => {
+  const { world } = await setup(t)
+  const beetroot = registry.blocksByName.beetroot
+  world.updateBlock({ x: 1, y: 71, z: 0 }, hashes.get(beetroot.minStateId + 3))
+  world.updateBlock({ x: 2, y: 71, z: 0 }, hashes.get(beetroot.minStateId + 7))
+  assert.deepEqual(world.cropAt(1, 71, 0), { kind: 'beetroot', growth: 3 })
+  assert.deepEqual(world.cropAt(2, 71, 0), { kind: 'beetroot', growth: 7 })
+  assert.deepEqual(await world.ripeCrops(world.position, 24), [{ x: 2, y: 71, z: 0, kind: 'beetroot' }])
+  const { scanBeetroot } = require('../scripts/smoke-beetroot.cjs')
+  const scan = await scanBeetroot(world, registry)
+  assert.deepEqual(scan.growthCounts, { 3: 1, 7: 1 })
+  assert.deepEqual(scan.crops.map(crop => [crop.x, crop.growth, crop.runtimeId]), [
+    [1, 3, hashes.get(beetroot.minStateId + 3)], [2, 7, hashes.get(beetroot.minStateId + 7)]
+  ])
+  assert.equal(scan.coverage.complete, false, 'Partial coverage remains visible in the scan report')
+  assert.equal(scan.stale, false)
+  assert.equal(scan.limitReached, false)
+})
+
 test('lookAt sends pitch, flags and extra fields; clickBlock options set face, click position and hotbar slot', async t => {
   const { navigator, sent } = await setup(t)
   const send = (name, params) => sent.push({ name, params })

@@ -1,5 +1,5 @@
 // Explicit live test for the planned farming mode: logs in as its own bot instance (stop the regular bot first, it uses the
-// same name), finds the nearest ripe crop (wheat/carrots/potatoes with growth 7, or SMOKE_TARGET="x y z" / SMOKE_CROP=<name>),
+// same name), finds the nearest ripe crop (wheat/carrots/potatoes/beetroot with growth 7, or SMOKE_TARGET="x y z" / SMOKE_CROP=<name>),
 // walks into reach if needed, breaks it (trying several block-action variants until the server confirms), records the drops
 // (add_item_entity / take_item_entity), walks onto them to pick them up, moves the seed into the hotbar, selects it and
 // replants (two variants; a crop counts as planted only if it still stands 3 s later). Needs a fresh `pnpm build`
@@ -12,7 +12,7 @@ const { createClient } = require('bedrock-protocol')
 const { readConfig } = require('../dist/config.js')
 const { BotController } = require('../dist/bot.js')
 
-const CROPS = { wheat: 'wheat_seeds', carrots: 'carrot', potatoes: 'potato' }
+const CROPS = { wheat: 'wheat_seeds', carrots: 'carrot', potatoes: 'potato', beetroot: 'beetroot_seeds' }
 const RIPE = 7
 const REACH = 4
 const WATCHED = /update_block|item_entity|take_item|remove_entity|inventory|item_stack|mob_equipment|level_event|level_sound|start_game|correct_player/
