@@ -198,7 +198,10 @@ export class Navigator {
 
   private clickDoor (send: Send, door: Position) {
     const state = this.world.doorAt(door.x, door.y, door.z)
-    if (state) this.clickBlock(send, door, state.runtimeId)
+    if (!state) return
+    this.clickBlock(send, door, state.runtimeId, this.world.inventory.heldItem(0))
+    // Flush the click even at rest, with the crosshair aimed at the clicked door half.
+    this.lookAt(send, { x: door.x + .5, y: door.y + .5, z: door.z + .5 })
   }
 
   /**
@@ -244,7 +247,7 @@ export class Navigator {
     const key = doorKey(door)
     if (this.doorPending?.key !== key) {
       this.doorPending = { key, door, since: now }
-      this.velocity = { x: 0, z: 0 }; this.neutral = this.inputActive
+      this.velocity = { x: 0, z: 0 }; this.neutral = false
       log(`Öffne Tür/Tor bei (${door.x}, ${door.y}, ${door.z}).`)
       return this.clickDoor(send, door)
     }

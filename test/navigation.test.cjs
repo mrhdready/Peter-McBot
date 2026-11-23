@@ -489,6 +489,41 @@ test('navigation stops at a closed door, clicks it once, passes after the server
   assert.ok(close.params.transaction.transaction_data.player_pos.x >= 3.3, 'Closes only after leaving the door block')
 })
 
+for (const fromEast of [false, true]) test(`door clicks from the ${fromEast ? 'east' : 'west'} use the real held item and immediately aim without moving`, async t => {
+  const { world, navigator, step, sent } = await setup(t)
+  const direction = doorWall(world)
+  world.position.x = fromEast ? 3.5 : 1.5
+  const held = { ...world.inventory.heldItem(0), network_id: 1, count: 2, has_stack_id: true, stack_id: 12 }
+  world.inventory.setSlot(0, held)
+  navigator.start({ x: fromEast ? 0 : 4, z: 0 }, 0)
+  await walkToDoor(world, step, sent)
+  const before = { ...world.position }
+  const assertClick = packet => {
+    const data = packet.params.transaction.transaction_data
+    assert.deepEqual(data.held_item, held)
+    const input = sent[sent.indexOf(packet) + 1]
+    assert.equal(input?.name, 'player_auth_input', 'Every click is flushed even when already stationary')
+    assert.deepEqual(input.params.position, data.player_pos)
+    assert.deepEqual(input.params.move_vector, { x: 0, z: 0 })
+    const dx = 2.5 - data.player_pos.x; const dz = .5 - data.player_pos.z
+    const yaw = Math.atan2(-dx, dz) * 180 / Math.PI
+    const pitch = Math.atan2(data.player_pos.y - 71.5, Math.hypot(dx, dz)) * 180 / Math.PI
+    assert.equal(input.params.yaw, yaw)
+    assert.equal(input.params.head_yaw, yaw)
+    assert.equal(input.params.pitch, pitch)
+    assert.deepEqual(input.params.interact_rotation, { x: pitch, z: yaw })
+  }
+  assertClick(clicks(sent)[0])
+  for (let i = 0; i < 5; i++) step()
+  assert.deepEqual(world.position, before, 'Waits for the server without moving')
+  assert.equal(clicks(sent).length, 1, 'No repeated toggle while awaiting the server')
+  placeDoor(world, 'wooden_door', true, direction)
+  for (let i = 0; i < 400 && ['planning', 'moving'].includes(world.navigation.status); i++) step()
+  assert.equal(world.navigation.status, 'arrived', world.navigation.message)
+  assert.equal(clicks(sent).length, 2)
+  assertClick(clicks(sent)[1])
+})
+
 test('a door stays open when another player is next to it', async t => {
   const { world, navigator, step, sent } = await setup(t)
   const direction = doorWall(world)
