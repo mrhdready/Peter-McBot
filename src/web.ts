@@ -263,5 +263,6 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
  */
 const ui = (name: string) => readFileSync(path.join(__dirname, 'ui', name), 'utf8')
 const page = ui('index.html')
+  .replace('<!-- ui:version -->', () => '@' + ui('version.txt').trim())
   .replace('<!-- ui:style -->', () => `<style>${ui('style.css')}</style>`)
   .replace('<!-- ui:script -->', () => `<script>${ui('app.js')}</script>`)

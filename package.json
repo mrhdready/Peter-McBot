@@ -8,7 +8,7 @@
   },
   "packageManager": "pnpm@11.25.0",
   "scripts": {
-    "build": "tsc && node -e \"require('node:fs').cpSync('src/ui','dist/ui',{recursive:true})\"",
+    "build": "tsc && node scripts/build-ui.cjs",
     "start": "node dist/main.js",
     "test": "pnpm build && node --test test/*.test.cjs",
     "check:compatibility": "node scripts/check-compatibility.cjs",

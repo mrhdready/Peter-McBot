@@ -9,7 +9,7 @@ test('Arcane preparation requires explicit server configuration and preserves co
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'mc-bot-deployment-'))
   t.after(()=>fs.rmSync(root,{recursive:true,force:true}))
   const project=path.resolve(__dirname,'..')
-  for(const name of ['Dockerfile','.dockerignore','package.json','pnpm-lock.yaml','pnpm-workspace.yaml','tsconfig.json','src','patches','test/terrain.test.cjs','deploy/arcane-template','scripts/prepare-arcane.cjs']){
+  for(const name of ['Dockerfile','.dockerignore','package.json','pnpm-lock.yaml','pnpm-workspace.yaml','tsconfig.json','src','patches','test/terrain.test.cjs','deploy/arcane-template','scripts/prepare-arcane.cjs','scripts/build-ui.cjs']){
     fs.mkdirSync(path.dirname(path.join(root,name)),{recursive:true})
     fs.cpSync(path.join(project,name),path.join(root,name),{recursive:true})
   }
@@ -20,7 +20,7 @@ test('Arcane preparation requires explicit server configuration and preserves co
   assert.match(missing.stderr,/BEDROCK_HOST is required/)
   assert.equal(fs.existsSync(path.join(root,'deploy/arcane')),false)
   const configured=spawnSync(process.execPath,['scripts/prepare-arcane.cjs'],{cwd:root,encoding:'utf8',env:{...env,
-    BEDROCK_HOST:'192.0.2.10',BEDROCK_PORT:'19133',BEDROCK_VERSION:'1.26.60',BEDROCK_ICE_HOST:'192.0.2.20',BOT_NAME:'PublicTest',CHUNK_RADIUS:'5',MAP_WORLD_ID:'public_world_2'}})
+    BUILD_REVISION:'abcdef1234567890',BEDROCK_HOST:'192.0.2.10',BEDROCK_PORT:'19133',BEDROCK_VERSION:'1.26.60',BEDROCK_ICE_HOST:'192.0.2.20',BOT_NAME:'PublicTest',CHUNK_RADIUS:'5',MAP_WORLD_ID:'public_world_2'}})
   assert.equal(configured.status,0,configured.stderr)
   const compose=JSON.parse(fs.readFileSync(path.join(root,'deploy/arcane/compose.yaml'),'utf8'))
   assert.deepEqual(compose.services.bot.environment,{
@@ -28,6 +28,9 @@ test('Arcane preparation requires explicit server configuration and preserves co
     BEDROCK_ICE_HOST:'192.0.2.20',BOT_NAME:'PublicTest',CHUNK_RADIUS:'5',MAP_WORLD_ID:'public_world_2',WEB_HOST:'0.0.0.0',WEB_PORT:'3000'
   })
   assert.equal(compose.services.bot.cpus,.5)
+  assert.deepEqual(compose.services.bot.build, {context:'.',args:{BUILD_REVISION:'abcdef1'}})
+  assert.equal(compose.services.test.build.args.BUILD_REVISION,'abcdef1')
+  assert.ok(fs.existsSync(path.join(root,'deploy/arcane/scripts/build-ui.cjs')))
   assert.equal(compose.services.bot.mem_limit,'256m')
   assert.deepEqual(compose.services.bot.healthcheck.test,['CMD','node','dist/healthcheck.js'])
   assert.ok(fs.existsSync(path.join(root,'deploy/arcane/src/healthcheck.ts')))

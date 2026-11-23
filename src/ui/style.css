@@ -28,6 +28,7 @@ input { min-width: 0; width: 100%; }
 
 .topbar { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem 1rem; padding: .6rem 1rem;
   background: var(--surface); border-bottom: 1px solid var(--border); }
+.build-version { color: var(--muted); font-size: .75rem; font-weight: normal; white-space: nowrap; }
 .badge { padding: .15rem .6rem; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border-strong); font-size: .85rem; }
 .badge.ok { border-color: var(--ok); color: var(--ok); }
 .badge.busy { border-color: var(--warn); color: var(--warn); }
