@@ -91,7 +91,7 @@ test('the bot name prefix is case-insensitive, allows @ and a separator, and mus
   await command('ich sag Peter Bot hallo')
   await command('Peter Bot tanz')
   await command('Peter Bot')
-  assert.deepEqual(said(), ['Hallo Alex!', 'Hallo Alex!', 'Befehle: hallo, go <Wegpunkt>, come, find <Block>, inventory, give <Item> [Anzahl], put <Item>|all [Anzahl], get <Item> [Anzahl], farming on|once|off [Wegpunkt], stop', 'Befehle: hallo, go <Wegpunkt>, come, find <Block>, inventory, give <Item> [Anzahl], put <Item>|all [Anzahl], get <Item> [Anzahl], farming on|once|off [Wegpunkt], stop'])
+  assert.deepEqual(said(), ['Hallo Alex!', 'Hallo Alex!', 'Befehle: hallo, go <Wegpunkt>, come, find <Block>, inventory, give <Item> [Anzahl], put <Item>|all [Anzahl], get <Item> [Anzahl], farming on|once|off [Wegpunkt], collect [<Item>|off], stop', 'Befehle: hallo, go <Wegpunkt>, come, find <Block>, inventory, give <Item> [Anzahl], put <Item>|all [Anzahl], get <Item> [Anzahl], farming on|once|off [Wegpunkt], collect [<Item>|off], stop'])
 })
 
 test('a player gets one command per 2 s; other players are not throttled', async t => {
@@ -515,4 +515,26 @@ test('farming on/once/off and status via chat; places as anchor, reach check, st
   assert.equal(bot.farm.status().once, true)
   await command('Peter Bot farming off', 'Bea')
   assert.equal(said().at(-1), 'Farming aus.')
+})
+
+
+test('collect starts all or one exact item, replaces the anchor/filter, pauses for manual commands and stops', async t => {
+  const { bot, command, said } = setup(t)
+  await command('Peter Bot collect')
+  assert.equal(bot.collector.status().enabled, true)
+  assert.equal(bot.collector.status().item, null)
+  bot.state.position = { x: 2.5, y: 72.62, z: .5 }
+  await command('Peter Bot collect minecraft:wheat')
+  assert.equal(bot.collector.status().item, 'wheat')
+  assert.equal(bot.collector.status().anchor.x, 2.5)
+  await command('Peter Bot collect <bad>')
+  assert.match(said().at(-1), /Ungültige Item-ID/)
+  assert.equal(bot.collector.status().item, 'wheat')
+  await command('Peter Bot come')
+  assert.match(bot.collector.status().activity, /Pausiert/)
+  await command('Peter Bot collect off')
+  assert.equal(bot.collector.status().enabled, false)
+  await command('Peter Bot collect')
+  await command('Peter Bot stop')
+  assert.equal(bot.collector.status().enabled, false)
 })

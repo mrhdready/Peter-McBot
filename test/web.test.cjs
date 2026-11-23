@@ -177,7 +177,9 @@ test('map markers select underground hits, survive map refresh and discard obsol
   const element = () => ({
     children: [], textContent: '', value: '', hidden: false, disabled: false, style: {},
     replaceChildren (...children) { this.children = children },
-    append (child) { this.children.push(child) },
+    append (...children) { this.children.push(...children) },
+    setAttribute (key, value) { this[key] = value },
+    focus () {},
     getContext: () => context,
     getBoundingClientRect: () => ({ left: 0, top: 0, width: 32, height: 32 })
   })
@@ -447,6 +449,35 @@ test('map markers select underground hits, survive map refresh and discard obsol
   byId('search-reset').onclick()
   assert.equal(byId('find').disabled, false)
   assert.equal(byId('search-reset').disabled, true)
+  // Item tab uses live entities without a block scan or movement request.
+  state.items = [
+    {id:'drop1', name:'minecraft:wheat', count:3, x:2.5, y:76.2, z:1.5},
+    {id:'drop2', name:'minecraft:dirt', count:64, x:5.5, y:71.2, z:1.5}
+  ]
+  state.collector = { enabled:true, item:'wheat', anchor:{x:.5,z:.5,label:'Basis'}, radius:24, activity:'Wartet auf Drops', pausedUntil:null, lastSummary:'Collector-Runde: 3 wheat gesammelt.' }
+  await publish()
+  assert.match(byId('collector-status').textContent, /Basis.*wheat/ )
+  assert.match(byId('collector-status').textContent, /Zuletzt: Collector-Runde: 3 wheat gesammelt\./)
+  const navBeforeItems = requests.filter(r => r.url === '/api/navigate').length
+  byId('items-tab').onclick()
+  assert.equal(byId('blocks-panel').hidden, true)
+  assert.equal(byId('items-panel').hidden, false)
+  const itemPins = () => byId('map-pins').children.filter(pin => pin.textContent === '📦')
+  assert.equal(itemPins().length, 2)
+  assert.ok(byId('item-hits').children.some(row => /wheat ×3.*Y: 76.2/.test(row.children[0].textContent)))
+  byId('item-filter').value = 'minecraft:wheat'; byId('item-filter').oninput()
+  assert.equal(byId('item-hits').children.length, 1)
+  assert.equal(itemPins().length, 1)
+  itemPins()[0].onclick()
+  assert.equal(byId('target-x').value, '2')
+  assert.equal(byId('target-z').value, '1')
+  assert.equal(requests.filter(r => r.url === '/api/navigate').length, navBeforeItems, 'Selecting a drop never starts movement')
+  state.items[0].x = 3.5; await publish()
+  assert.equal(itemPins()[0].style.left, '60.9375%')
+  state.items = []; await publish()
+  assert.equal(byId('item-hits').children.length, 0)
+  assert.equal(itemPins().length, 0, 'Removed drops disappear on the next SSE snapshot')
+  byId('blocks-tab').onclick()
   let finish
   pendingSearch = new Promise(resolve => { finish = resolve })
   const obsolete = submit()
@@ -485,4 +516,49 @@ test('navigation API bounds JSON and accepts X/Z only; start and stop use the ti
   assert.equal((await fetch(base + '/api/stop_navigation', { method: 'POST', headers: { 'Content-Type': 'application/json' } })).status, 202)
   bot.step()
   assert.deepEqual(bot.state.navigation.target, { x: -3, z: 2 }, 'Stop discards the pending start')
+})
+
+
+test('collector HTTP validates filters, resolves anchors and publishes live items and job status', async t => {
+  const { EventEmitter } = require('node:events')
+  const client = Object.assign(new EventEmitter(), { entityId: 10n, queue () {}, close () {} })
+  const bot = new BotController(readConfig({ BEDROCK_HOST: 'localhost' }), () => client)
+  const places = { revision:0, list:async dimension => ({pois:dimension === 0 ? [{id:'base',name:'Basis',x:4,z:2}] : [],history:[]}) }
+  const web = createWebServer(bot, undefined, places)
+  t.after(() => { bot.stop(); web.close() })
+  web.server.listen(0, '127.0.0.1'); await once(web.server, 'listening')
+  const base = `http://127.0.0.1:${web.server.address().port}`
+  const post = (body, headers = {'Content-Type':'application/json'}) => fetch(base + '/api/collector', {method:'POST',headers,body:JSON.stringify(body)})
+  assert.equal((await post({action:'on'}, {})).status, 415)
+  assert.equal((await post({action:'on'}, {'Content-Type':'application/json',Origin:'https://foreign.example'})).status, 403)
+  for (const body of [{action:'wrong'},{action:'on',item:2},{action:'on',item:'<bad>'},{action:'on',place:3}]) assert.equal((await post(body)).status, 400)
+  assert.equal((await post({action:'on',item:'x'.repeat(300)})).status, 413)
+  assert.equal((await post({action:'on'})).status, 409)
+  bot.enqueue('connect'); bot.step()
+  client.emit('start_game', { player_position:{x:.5,y:72.62,z:.5},dimension:0 })
+  client.emit('spawn')
+  assert.equal((await post({action:'on',place:'missing'})).status, 404)
+  const response = await post({action:'on',place:'base',item:'minecraft:wheat'})
+  assert.equal(response.status, 202)
+  const status = (await response.json()).collector
+  assert.equal(status.item, 'wheat')
+  assert.deepEqual(status.anchor, {x:4.5,z:2.5,label:'Basis'})
+  client.emit('item_registry', {itemstates:[{name:'minecraft:wheat',runtime_id:1}]})
+  client.emit('add_item_entity', {runtime_entity_id:50n,entity_id_self:51n,item:{network_id:1,count:3},position:{x:1.5,y:71.2,z:.5}})
+  const snapshot = await fetch(base + '/api/status').then(r => r.json())
+  assert.equal(snapshot.collector.enabled, true)
+  assert.deepEqual(snapshot.items, [{id:'50',name:'minecraft:wheat',count:3,x:1.5,y:71.2,z:.5}])
+  const abort = new AbortController(); t.after(() => abort.abort())
+  const events = await fetch(base + '/api/events', {signal:abort.signal})
+  const reader = events.body.getReader()
+  const event = new TextDecoder().decode((await reader.read()).value)
+  assert.match(event, /"collector":\{"enabled":true/)
+  assert.match(event, /"items":\[\{"id":"50"/)
+  await reader.cancel()
+  bot.farm.start({x:.5,z:.5,label:'Feld'})
+  assert.equal(bot.collector.status().enabled, false)
+  await post({action:'on'})
+  assert.equal(bot.farm.status().enabled, false)
+  assert.equal((await post({action:'off'})).status, 202)
+  assert.equal(bot.collector.status().enabled, false)
 })

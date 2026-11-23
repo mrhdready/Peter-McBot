@@ -22,6 +22,9 @@ let mapContext = '';
 let previousNavigationStatus = null;
 let botPosition = null;
 let players = [];
+let itemDrops = [];
+let searchTab = 'blocks';
+let selectedItemId = null;
 let chatRevision = null;
 let chatRequest = null;
 let inventoryRevision = null;
@@ -384,7 +387,7 @@ function pinSpecs (map) {
     for (const poi of places.pois) specs.push({key:'poi:' + poi.id, kind:'poi', x:poi.x + .5, z:poi.z + .5, poi});
   }
   // One hit pin per X/Z column; hits below each other are chosen via #map-hit-options.
-  if (live && searchResult && searchResult.coverage.session === map.coverage.session) {
+  if (live && searchTab === 'blocks' && searchResult && searchResult.coverage.session === map.coverage.session) {
     const columns = new Map();
     for (const hit of searchResult.hits) {
       const key = 'hit:' + hit.x + ':' + hit.z;
@@ -393,6 +396,7 @@ function pinSpecs (map) {
     }
     specs.push(...columns.values());
   }
+  if (live && searchTab === 'items') for (const item of visibleItems()) specs.push({key:'item:' + item.id, kind:'item', x:item.x, z:item.z, item});
   if (live) for (const player of players) specs.push({key:'player:' + player.id, kind:'player', x:player.x, z:player.z, player});
   const targetX = Number(byId('target-x').value); const targetZ = Number(byId('target-z').value);
   if (live && byId('target-x').value.trim() && byId('target-z').value.trim() && [targetX,targetZ].every(Number.isInteger)) {
@@ -402,6 +406,13 @@ function pinSpecs (map) {
   return specs.filter(spec => spec.x >= map.x && spec.x < map.x + map.width && spec.z >= map.z && spec.z < map.z + map.height);
 }
 function createPin (spec) {
+  if (spec.kind === 'item') {
+    const button = document.createElement('button'); button.type = 'button'; button.textContent = '📦';
+    button.onclick = () => activatePin(pins.get(spec.key));
+    button.onfocus = () => showOverlay(spec.key);
+    button.onblur = () => { if (overlayPin === spec.key) hideOverlay(); };
+    return button;
+  }
   if (spec.kind === 'poi') {
     // Places are buttons so keyboard users reach them with Tab; Enter selects them as target.
     const button = document.createElement('button'); button.type = 'button';
@@ -429,6 +440,10 @@ function updatePins (map) {
     pin.element.style.left = (spec.x - map.x) / map.width * 100 + '%';
     pin.element.style.top = (spec.z - map.z) / map.height * 100 + '%';
     if (spec.kind === 'hit') pin.element.className = 'pin pin-center pin-hit' + (spec.hits.includes(selectedHit) ? ' selected' : '');
+    if (spec.kind === 'item') {
+      pin.element.className = 'pin pin-center pin-item' + (spec.item.id === selectedItemId ? ' selected' : '');
+      pin.element.ariaLabel = itemText(spec.item) + '. Enter übernimmt den Drop als Ziel.';
+    }
     if (spec.kind === 'poi') pin.element.ariaLabel = 'Ort ' + spec.poi.name + ' – X: ' + spec.poi.x + ', Z: ' + spec.poi.z + '. Enter übernimmt ihn als Ziel.';
     next.set(spec.key, pin);
   }
@@ -450,6 +465,7 @@ function overlayText (spec) {
     const distance = distanceText(spec.poi.x, spec.poi.z);
     return (poiIcons[spec.poi.icon] || '📍') + ' ' + spec.poi.name + '\nX: ' + spec.poi.x + ', Z: ' + spec.poi.z + (distance ? '\n' + distance : '') + '\n' + hint;
   }
+  if (spec.kind === 'item') return '📦 ' + itemText(spec.item) + '\n' + hint;
   if (spec.kind === 'bot') {
     return '🤖 Bot\nX: ' + botPosition.x.toFixed(1) + ', Y: ' + botPosition.y.toFixed(1) + ', Z: ' + botPosition.z.toFixed(1) + '\n' + byId('nav-status').textContent;
   }
@@ -489,7 +505,7 @@ function pinAt (clientX, clientY) {
   let best = null; let bestDistance = 20;
   for (const pin of pins.values()) {
     const x = bounds.left + (pin.spec.x - currentMap.x) * scale;
-    const z = bounds.top + (pin.spec.z - currentMap.z) * scale - (pin.spec.kind === 'bot' || pin.spec.kind === 'player' || pin.spec.kind === 'hit' ? 0 : 14);
+    const z = bounds.top + (pin.spec.z - currentMap.z) * scale - (pin.spec.kind === 'bot' || pin.spec.kind === 'player' || pin.spec.kind === 'hit' || pin.spec.kind === 'item' ? 0 : 14);
     const distance = Math.hypot(clientX - x, clientY - z);
     // Strictly nearer only: on a tie the earlier pin wins, so a place beats the target or bot on the same cell.
     if (distance < bestDistance) { best = pin; bestDistance = distance; }
@@ -499,6 +515,7 @@ function pinAt (clientX, clientY) {
 function activatePin (pin) {
   if (!pin || !currentMap) return;
   hideOverlay();
+  if (pin.spec.kind === 'item') { selectItemTarget(pin.spec.item); return; }
   if (pin.spec.kind === 'poi') selectPlaceTarget(pin.spec.poi.x, pin.spec.poi.z, pin.spec.poi.name);
   else selectMapTarget(pin.spec.x - currentMap.x, pin.spec.z - currentMap.z);
 }
@@ -561,11 +578,13 @@ function renderPlaces () {
 }
 // The farm anchor is the bot's position or a saved place of the connected dimension.
 function renderFarmAnchors () {
-  const select = byId('farm-anchor'); const chosen = select.value;
   const pois = placesEnabled && dimensionNumber(lastDimension) === places.dimension ? places.pois : [];
   const option = (value, label) => { const entry = document.createElement('option'); entry.value = value; entry.textContent = label; return entry; };
-  select.replaceChildren(option('', 'Aktuelle Bot-Position'), ...pois.map(poi => option(poi.id, (poiIcons[poi.icon] || '📍') + ' ' + poi.name)));
-  select.value = pois.some(poi => poi.id === chosen) ? chosen : '';
+  for (const id of ['farm-anchor', 'collector-anchor']) {
+    const select = byId(id); const chosen = select.value;
+    select.replaceChildren(option('', 'Aktuelle Bot-Position'), ...pois.map(poi => option(poi.id, (poiIcons[poi.icon] || '📍') + ' ' + poi.name)));
+    select.value = pois.some(poi => poi.id === chosen) ? chosen : '';
+  }
 }
 let farmState = null;
 function renderFarm () {
@@ -590,6 +609,74 @@ byId('farm-toggle').onclick = async () => {
   } catch (error) { byId('farm-feedback').textContent = (on ? 'Start' : 'Beenden') + ' fehlgeschlagen: ' + error.message; }
   renderFarm();
 };
+let collectorState = null;
+function renderCollector () {
+  const job = collectorState;
+  if (!job) return;
+  byId('collector-toggle').textContent = job.enabled ? 'Collector beenden' : 'Collector starten';
+  byId('collector-toggle').disabled = !job.enabled && botStatus !== 'spawned';
+  byId('collector-anchor').disabled = job.enabled; byId('collector-item').disabled = job.enabled;
+  if (job.enabled) byId('collector-item').value = job.item || '';
+  const until = job.pausedUntil ? ' bis ' + new Date(job.pausedUntil).toLocaleTimeString('de-DE') : '';
+  byId('collector-status').textContent = (job.enabled ? job.activity + until + ' – Anker: ' + job.anchor.label + ', Radius ' + job.radius + ', ' + (job.item || 'alle Items') + '.' : 'Collector ist aus.') + (job.lastSummary ? ' Zuletzt: ' + job.lastSummary : '');
+}
+byId('collector-toggle').onclick = async () => {
+  const on = !collectorState?.enabled;
+  try {
+    const body = on ? {action:'on', place:byId('collector-anchor').value || null, item:byId('collector-item').value.trim()} : {action:'off'};
+    const response = await fetch('/api/collector', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'HTTP ' + response.status);
+    if (result.collector) collectorState = result.collector;
+    byId('collector-feedback').textContent = on ? 'Collector gestartet.' : 'Collector beendet.';
+  } catch (error) { byId('collector-feedback').textContent = error.message; }
+  renderCollector();
+};
+function visibleItems () {
+  const query = byId('item-filter').value.trim().toLowerCase().replace(/^minecraft:/, '');
+  if (query && !/^(?:[a-z0-9_.-]+:)?[a-z0-9_./-]+$/.test(query)) return [];
+  return itemDrops.filter(item => !query || item.name.replace(/^minecraft:/, '') === query)
+    .sort((a, b) => itemDistance(a) - itemDistance(b));
+}
+function itemDistance (item) { return botPosition ? Math.hypot(item.x - botPosition.x, item.y - (botPosition.y - 1.62), item.z - botPosition.z) : 0; }
+function itemText (item) { return item.name.replace(/^minecraft:/, '') + ' ×' + item.count + ' – X: ' + item.x.toFixed(1) + ', Y: ' + item.y.toFixed(1) + ', Z: ' + item.z.toFixed(1) + ' (' + Math.round(itemDistance(item)) + ' Blöcke)'; }
+function selectItemTarget (item) {
+  const current = itemDrops.find(drop => drop.id === item.id);
+  if (!current) return;
+  selectedItemId = item.id;
+  byId('target-x').value = String(Math.floor(current.x)); byId('target-z').value = String(Math.floor(current.z));
+  byId('nav-feedback').textContent = 'Drop als X/Z-Ziel gewählt: ' + itemText(current) + '. Mit „Navigation starten“ anlaufen.';
+  schedulePreview(); drawMap();
+}
+function renderItems () {
+  const items = visibleItems();
+  if (!itemDrops.some(item => item.id === selectedItemId)) selectedItemId = null;
+  byId('items-status').textContent = botStatus !== 'spawned' ? 'Nicht verbunden.' : items.length + ' bekannte Drops. Nur vom Server gemeldete Items; keine vollständige Umgebungssuche.';
+  byId('item-hits').replaceChildren(...items.map(drop => {
+    const row = document.createElement('li'); const text = document.createElement('span'); text.textContent = itemText(drop);
+    row.append(text, listButton('Ziel', itemText(drop) + ' als Ziel übernehmen', () => selectItemTarget(drop)));
+    return row;
+  }));
+}
+function switchSearchTab (tab) {
+  searchTab = tab;
+  for (const name of ['blocks', 'items']) {
+    byId(name + '-tab').setAttribute('aria-selected', String(name === tab));
+    byId(name + '-tab').tabIndex = name === tab ? 0 : -1;
+    byId(name + '-panel').hidden = name !== tab;
+  }
+  renderItems(); drawMap();
+}
+for (const name of ['blocks', 'items']) {
+  byId(name + '-tab').onclick = () => switchSearchTab(name);
+  byId(name + '-tab').onkeydown = event => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const tab = event.key === 'Home' ? 'blocks' : event.key === 'End' ? 'items' : searchTab === 'blocks' ? 'items' : 'blocks';
+    switchSearchTab(tab); byId(tab + '-tab').focus();
+  };
+}
+byId('item-filter').oninput = () => { renderItems(); drawMap(); };
 // Players in range first by distance, then everyone else alphabetically.
 function renderPlayers (roster, spawned) {
   const distance = player => player.position && botPosition ? Math.hypot(player.position.x - botPosition.x, player.position.z - botPosition.z) : null;
@@ -787,7 +874,7 @@ canvas.onclick = event => {
     if (pin && overlayPin !== pin.key) { showOverlay(pin.key); return; }
     hideOverlay();
     if (pin) { activatePin(pin); return; }
-  } else if (pin?.spec.kind === 'poi' || pin?.spec.kind === 'hit') { activatePin(pin); return; }
+  } else if (pin?.spec.kind === 'poi' || pin?.spec.kind === 'hit' || pin?.spec.kind === 'item') { activatePin(pin); return; }
   const bounds = canvas.getBoundingClientRect();
   selectMapTarget((event.clientX - bounds.left) / bounds.width * currentMap.width, (event.clientY - bounds.top) / bounds.height * currentMap.height);
 };
@@ -1031,6 +1118,7 @@ events.onmessage = event => {
   if (state.skin) skinState = state.skin;
   renderSkin();
   if (state.farm) { farmState = state.farm; renderFarm(); }
+  if (state.collector) { collectorState = state.collector; renderCollector(); }
   byId('position').textContent = state.position ? Object.entries(state.position).map(([k,v])=>k+': '+v.toFixed(2)).join(' / ') + (state.positionSource === 'predicted' ? ' (Client-Prognose)' : ' (Server)') : 'Unbekannt';
   const nextDimension = dimensionNumber(state.dimension);
   if (archiveEnabled && followBot && nextDimension !== null && mapDimension !== nextDimension) {
@@ -1069,6 +1157,8 @@ events.onmessage = event => {
   registryReady = Boolean(coverage?.ready);
   botPosition = state.position;
   players = Array.isArray(state.players) ? state.players : [];
+  itemDrops = state.status === 'spawned' && Array.isArray(state.items) ? state.items : [];
+  renderItems();
   renderPlayers(Array.isArray(state.roster) ? state.roster : [], state.status === 'spawned');
   if (state.chatRevision !== chatRevision) { chatRevision = state.chatRevision; void loadChat(); }
   if (state.inventoryRevision !== inventoryRevision) { inventoryRevision = state.inventoryRevision; void loadInventory(); }
@@ -1108,5 +1198,5 @@ events.onmessage = event => {
     (coverage.complete ? 'Bereich vollständig geladen.' : 'Unbekannte Bereiche werden nicht als Luft gewertet.') +
     (coverage.error ? ' Letzter Datenfehler: ' + coverage.error : '');
 };
-events.onerror = () => { cancelPreview(); mapNavigation = null; drawMap(); byId('feedback').textContent = 'Statusverbindung unterbrochen. Wiederverbindung läuft.'; };
+events.onerror = () => { itemDrops = []; renderItems(); cancelPreview(); mapNavigation = null; drawMap(); byId('feedback').textContent = 'Statusverbindung unterbrochen. Wiederverbindung läuft.'; };
 events.onopen = () => { byId('feedback').textContent = 'Statusverbindung aktiv.'; };

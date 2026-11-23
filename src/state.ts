@@ -7,7 +7,7 @@ export type Player = { name: string; position: Position; uniqueId: string; uuid:
 export type ItemEntity = { uniqueId: string; name: string; count: number; position: Position }
 export type NavigationState = {
   status: 'idle' | 'planning' | 'moving' | 'stopped' | 'arrived' | 'error';
-  target: { x: number; z: number } | null; feetY: number | null;
+  target: { x: number; z: number; y?: number } | null; feetY: number | null;
   path: Position[]; remaining: number; replans: number; corrections: number; message: string | null
 }
 
@@ -49,6 +49,7 @@ export class WorldState extends ChunkWorld {
       lastServerPosition: this.lastServerPosition ? { ...this.lastServerPosition } : null,
       navigation: { ...this.navigation, path: this.navigation.path.map(point => ({ ...point })), target: this.navigation.target ? { ...this.navigation.target } : null },
       dimension: this.dimension,
+      items: [...this.items].map(([id, item]) => ({ id, name: item.name, count: item.count, ...item.position })),
       players: [...this.players].map(([id, player]) => ({ id, name: player.name, ...player.position })),
       // A roster entry carries the position only while that player is in entity range.
       roster: [...this.roster].map(([uuid, name]) => {

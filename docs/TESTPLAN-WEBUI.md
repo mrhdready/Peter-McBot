@@ -110,3 +110,16 @@ Kernfall der Neugestaltung: **kein Scrollen der Seite** zwischen Zielwahl und St
 ## Rückmeldung
 
 Bitte Fälle mit ❌ samt Browser, Fenstergröße und Beobachtung (Screenshot hilft) zurückmelden.
+
+
+## Collector und Item-Tab
+
+1. Im Tab „Items“ gedroppte Items mit Name, Anzahl, Koordinaten und Entfernung prüfen. Leerer Filter zeigt alle; `wheat` und `minecraft:wheat` zeigen dieselben Drops. Karte zeigt 📦. Bewegung und Verschwinden aktualisieren Liste und Marker ohne erneute Suche.
+2. Mit Tastatur zwischen „Blöcke“ und „Items“ wechseln (Pfeile, Home/End). Drop per „Ziel“ oder Kartenmarker wählen: Ziel und Vorschau ändern sich, Bot bleibt stehen.
+3. Collector an der Bot-Position und an einem Wegpunkt starten. Alle Drops bzw. nur die gewählte Item-ID im horizontalen Radius verfolgen; auf einem sicheren Hang auch mehr als drei Blöcke Höhenunterschied testen. Andere Etage derselben Spalte darf nicht als Ankunft gelten.
+4. Nach der Runde Ankerrückkehr und Warten auf neue Drops prüfen. Unerreichbares Item und fehlgeschlagene Aufnahme: andere Drops weiter verfolgen, nach 30 Sekunden erneut versuchen.
+5. Mit vollem Inventar am Anker warten; Slot freimachen und Fortsetzung prüfen. Keine automatische Kistennutzung.
+6. Farm starten beendet Collector und umgekehrt. `collect`, `collect wheat`, `collect off`, manuelle Chat-Pause (60 Sekunden), UI-Navigation und Stopp prüfen. Stopp auch direkt nach Start testen: kein verspäteter Navigationsauftrag.
+7. Reconnect: Anker und Filter bleiben aktiv, alte Drops verschwinden. Prozessneustart: Collector aus.
+
+Diese Schritte sind manuelle Live-Prüfungen und bewegen bei aktivem Collector einen echten Spieler.

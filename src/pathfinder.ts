@@ -12,7 +12,7 @@ export const COST_EDGE = 2
 export const COST_DOOR = 3
 export const MAX_SEARCH_NODES = 16384
 const NEIGHBOURS = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const
-export type Target = { x: number; z: number }
+export type Target = { x: number; z: number; y?: number }
 export type PreviewRoute = { target: Target; origin: Position; path: Feet[]; session: number; revision: number }
 type Node = Feet & { g: number; f: number }
 const key = (p: Feet) => p.x + ':' + p.y + ':' + p.z
@@ -53,6 +53,7 @@ export class RoutePlanner {
 
   constructor (private world: WorldState, position: Position, private target: Target) {
     if (![target.x, target.z].every(n => Number.isInteger(n) && Math.abs(n) <= 30000000)) throw new Error('X und Z müssen ganzzahlige Blockkoordinaten sein.')
+    if (target.y !== undefined && (!Number.isFinite(target.y) || Math.abs(target.y) > 30000000)) throw new Error('Ungültige Zielhöhe.')
     const feetY = world.terrain.surfaceAt(position.x, position.z, position.y - EYE_HEIGHT + .08, position.y - EYE_HEIGHT - .08)
     if (feetY === null) throw new Error('Startposition hat keine bekannte, sichere Standfläche mit ausreichend Freiraum.')
     if (!world.chunks.has(Math.floor(target.x / 16) + ':' + Math.floor(target.z / 16))) throw new Error('Ziel liegt außerhalb der geladenen Chunks.')
@@ -73,7 +74,7 @@ export class RoutePlanner {
       if (this.closed.has(id)) continue
       this.closed.add(id)
       if (this.closed.size > MAX_SEARCH_NODES) throw new Error(`Suchlimit erreicht (${MAX_SEARCH_NODES} Wegpunkte).`)
-      if (node.x === target.x && node.z === target.z) {
+      if (node.x === target.x && node.z === target.z && (target.y === undefined || Math.abs(node.y - target.y) <= 1)) {
         let cursor: Feet = node
         const path: Feet[] = [{ x: cursor.x + .5, y: cursor.y, z: cursor.z + .5 }]
         while (this.parents.has(key(cursor))) {

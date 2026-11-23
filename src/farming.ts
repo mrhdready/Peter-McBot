@@ -19,6 +19,8 @@ import { CROP_KINDS, RIPE_GROWTH, WorldError, type CropKind } from './world.js'
 import { CHEST_CONTAINER, nextTransfer, playerContainer, shortName, type Inventory, type Slot, type StackResponse, type TransferStep } from './inventory.js'
 import { CHEST_IDS, chestStandSpot } from './chat-commands.js'
 
+import { dropColumn, nearestDrop, PICKUP_MS } from './item-collection.js'
+
 type Send = (name: string, params: unknown) => void
 type Spot = Position & { kind: CropKind }
 type Stand = { x: number; z: number; feetY: number }
@@ -54,6 +56,7 @@ export interface FarmHost {
   /** Loaded radius in blocks. */
   readonly reach: number
   readonly navigator: Pick<Navigator, 'lookAt' | 'clickBlock'>
+  activate? (): void
   now (): number
   enqueue (command: Command): boolean
   entityId (): unknown
@@ -108,6 +111,7 @@ export class Farmer {
     const distance = Math.round(Math.hypot(anchor.x - p.x, anchor.z - p.z))
     if (distance > this.host.reach) return `${anchor.label} ist zu weit weg (${distance} Blöcke).`
     this.cancel()
+    this.host.activate?.()
     this.enabled = true; this.once = once; this.anchor = { ...anchor }
     this.pausedUntil = 0; this.nextScanAt = 0; this.lastSummary = null
     this.unplanted = []; this.reported.clear()
@@ -150,6 +154,8 @@ export class Farmer {
   navigationEnded (token: number, status: string) {
     if (token === this.navToken) this.navEnd = status
   }
+
+  acceptsNavigation (token: number) { return this.enabled && this.running && this.navToken === token }
 
   status (): FarmStatus {
     const now = this.host.now()
@@ -325,19 +331,18 @@ export class Farmer {
     await this.ticks(600, () => false, send => this.host.navigator.lookAt(send, look))
     const skipped = new Set<string>()
     for (let walk = 0; walk < PICKUP_WALKS; walk++) {
-      const open = [...this.host.state.items].filter(([id, item]) => !skipped.has(id) &&
+      const drop = nearestDrop(this.host.state, (id, item) => !skipped.has(id) &&
         Math.max(Math.abs(Math.floor(item.position.x) - stand.x), Math.abs(Math.floor(item.position.z) - stand.z)) <= 2 &&
         Math.abs(item.position.y - stand.feetY) <= 3)
-      if (!open.length) return
+      if (!drop) return
       const p = this.host.state.position!
-      open.sort(([, a], [, b]) => Math.hypot(a.position.x - p.x, a.position.z - p.z) - Math.hypot(b.position.x - p.x, b.position.z - p.z))
-      const [id, item] = open[0]
-      const column = { x: Math.floor(item.position.x), z: Math.floor(item.position.z) }
+      const [id, item] = drop
+      const column = dropColumn(item)
       if (Math.floor(p.x) !== column.x || Math.floor(p.z) !== column.z) {
         const status = await this.walk(column.x, column.z, 'Drop')
         if (status !== 'arrived') { skipped.add(id); continue }
       }
-      if (!(await this.ticks(1500, () => !this.host.state.items.has(id), send => this.host.navigator.lookAt(send, look)))) skipped.add(id)
+      if (!(await this.ticks(PICKUP_MS, () => !this.host.state.items.has(id), send => this.host.navigator.lookAt(send, look)))) skipped.add(id)
     }
   }
 

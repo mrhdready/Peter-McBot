@@ -21,7 +21,7 @@ const COME_DISTANCE = 2
 // After walking up, the receiver must still be this close (horizontally) or the bot keeps the items.
 const GIVE_REACH = 4
 const INVENTORY_LINES = 8
-const HELP = 'Befehle: hallo, go <Wegpunkt>, come, find <Block>, inventory, give <Item> [Anzahl], put <Item>|all [Anzahl], get <Item> [Anzahl], farming on|once|off [Wegpunkt], stop'
+const HELP = 'Befehle: hallo, go <Wegpunkt>, come, find <Block>, inventory, give <Item> [Anzahl], put <Item>|all [Anzahl], get <Item> [Anzahl], farming on|once|off [Wegpunkt], collect [<Item>|off], stop'
 // Every chest kind counts; ender chests, barrels and shulker boxes do not.
 export const CHEST_IDS = ['chest', 'trapped_chest', 'copper_chest', 'exposed_copper_chest', 'weathered_copper_chest', 'oxidized_copper_chest',
   'waxed_copper_chest', 'waxed_exposed_copper_chest', 'waxed_weathered_copper_chest', 'waxed_oxidized_copper_chest']
@@ -63,6 +63,7 @@ export class ChatCommands {
     bot.onChat = (sender, message) => { void this.handle(sender, message) }
     bot.onNavigationEnd = (origin, status, message) => this.navigationEnded(origin, status, message)
     bot.farm.onReport = text => this.say(text)
+    bot.collector.onReport = text => this.say(text)
   }
 
   async handle (sender: string, message: string) {
@@ -78,14 +79,15 @@ export class ChatCommands {
       switch (word.toLowerCase()) {
         case 'hallo': case 'hi': case 'hey': return this.say(`Hallo ${sender}!`)
         // Commands that move the bot or use a chest pause farming; it resumes a minute after the last one.
-        case 'go': this.bot.farm.pause(); return await this.go(sender, argument)
-        case 'come': this.bot.farm.pause(); return this.come(sender)
+        case 'go': this.bot.farm.pause(); this.bot.collector.pause(); return await this.go(sender, argument)
+        case 'come': this.bot.farm.pause(); this.bot.collector.pause(); return this.come(sender)
         case 'find': return await this.find(sender, argument)
         case 'inventory': case 'inv': return this.inventory()
-        case 'give': this.bot.farm.pause(); return this.give(sender, rest)
-        case 'put': this.bot.farm.pause(); return await this.put(sender, rest)
-        case 'get': this.bot.farm.pause(); return await this.get(sender, rest)
+        case 'give': this.bot.farm.pause(); this.bot.collector.pause(); return this.give(sender, rest)
+        case 'put': this.bot.farm.pause(); this.bot.collector.pause(); return await this.put(sender, rest)
+        case 'get': this.bot.farm.pause(); this.bot.collector.pause(); return await this.get(sender, rest)
         case 'farming': case 'farm': return await this.farming(sender, rest)
+        case 'collect': return this.collect(rest)
         case 'stop': return this.stop()
         default: return this.say(HELP)
       }
@@ -374,6 +376,15 @@ export class ChatCommands {
     this.say(reason ? `${reason} ${summary}` : summary)
   }
 
+  private collect (words: string[]) {
+    if (words.length > 1) return this.say('collect [<Item>|off]')
+    if (words[0]?.toLowerCase() === 'off') { if (!this.bot.collector.off()) this.say('Collector ist schon aus.'); return }
+    const p = this.bot.state.position
+    if (!p) return this.say('Meine Position ist gerade unbekannt.')
+    const error = this.bot.collector.start({ x: p.x, z: p.z, label: 'meiner Position' }, words[0])
+    if (error) this.say(error)
+  }
+
   /** farming [on|once [place]] | farming off: anchor is the bot's position or a saved place; without arguments the status. */
   private async farming (sender: string, words: string[]) {
     const farm = this.bot.farm
@@ -417,6 +428,7 @@ export class ChatCommands {
 
   private stop () {
     // Stop switches farming off; the farmer announces that itself.
+    if (this.bot.collector.off('Stopp')) { this.bot.enqueue('stop_navigation'); return }
     if (this.bot.farm.off('Stopp')) { this.bot.enqueue('stop_navigation'); return }
     // A put/get run ends via its navigation or chest callbacks, which report what was moved.
     if (this.chestRun) { this.bot.enqueue('stop_navigation'); return }

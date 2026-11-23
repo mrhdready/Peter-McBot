@@ -143,3 +143,8 @@ details.panel[open] > summary { margin-bottom: .6rem; }
   #navigate { position: fixed; z-index: 10; left: 0; right: 0; bottom: 0; padding: .6rem .75rem;
     background: var(--surface); border-top: 1px solid var(--border-strong); }
 }
+
+[role="tabpanel"][hidden] { display: none; }
+[role="tab"][aria-selected="true"] { border-color: var(--accent); color: var(--accent); }
+.pin-item { font-size: 1.1rem; border-radius: 50%; }
+.pin-item.selected { background: rgb(17 24 39 / .8); box-shadow: 0 0 0 2px #fff; }

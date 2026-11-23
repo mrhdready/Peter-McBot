@@ -1,5 +1,6 @@
 import { createServer, type ServerResponse } from 'node:http'
 import type { BotController, Command } from './bot.js'
+import { itemFilter } from './item-collection.js'
 import { WorldError, dimensionId } from './world.js'
 import { MapArchive } from './map-archive.js'
 import { POI_ICONS, type PlaceStore } from './places.js'
@@ -14,7 +15,7 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
   let mapClients = 0
   let metrics: ReturnType<typeof mapRuntimeMetrics> | null = null
   let metricsAt = 0
-  const snapshot = () => JSON.stringify({ ...bot.state.snapshot(), chatRevision: bot.chatRevision, inventoryRevision: bot.state.inventory.revision, farm: bot.farm.status(), ...(places ? { placesRevision: places.revision } : {}), ...(skins ? { skin: skins.status() } : {}) })
+  const snapshot = () => JSON.stringify({ ...bot.state.snapshot(), chatRevision: bot.chatRevision, inventoryRevision: bot.state.inventory.revision, farm: bot.farm.status(), collector: bot.collector.status(), ...(places ? { placesRevision: places.revision } : {}), ...(skins ? { skin: skins.status() } : {}) })
   const broadcast = () => {
     const data = `data: ${snapshot()}\n\n`
     for (const response of streams) {
@@ -84,7 +85,7 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
         .replace('const skinEnabled = false;', `const skinEnabled = ${Boolean(skins)};`)
       response.end(request.url === '/?measure=1' ? content.replace('</html>', mapPerformancePanel + '</html>') : content)
     } else if (request.method === 'GET' && request.url === '/api/status') {
-      reply(200, bot.state.snapshot())
+      reply(200, { ...bot.state.snapshot(), farm: bot.farm.status(), collector: bot.collector.status() })
     } else if (request.method === 'GET' && request.url === '/api/chat') {
       reply(200, bot.chatLog())
     } else if (request.method === 'GET' && request.url === '/api/inventory') {
@@ -165,10 +166,13 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
       })
       request.on('error', () => reply(400, { error: 'Incomplete request' }))
     // Farming on (around the bot or a saved place of the current dimension) or off.
-    } else if (request.method === 'POST' && request.url === '/api/farm') {
+    } else if (request.method === 'POST' && ['/api/farm', '/api/collector'].includes(request.url || '')) {
       if (request.headers.origin && request.headers.origin !== `http://${request.headers.host}` && request.headers.origin !== `https://${request.headers.host}`) return reply(403, { error: 'Foreign origin rejected' })
       if (request.headers['content-type'] !== 'application/json') return reply(415, { error: 'Use application/json' })
-      const limit = 128
+      const collecting = request.url === '/api/collector'
+      const job = collecting ? bot.collector : bot.farm
+      const key = collecting ? 'collector' : 'farm'
+      const limit = collecting ? 256 : 128
       if (Number(request.headers['content-length'] || 0) > limit) { request.resume(); return reply(413, { error: `Body exceeds ${limit} bytes` }) }
       const chunks: Buffer[] = []; let bytes = 0; let rejected = false
       request.on('data', (chunk: Buffer) => {
@@ -182,18 +186,24 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
         try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch { return reply(400, { error: 'Invalid JSON' }) }
         if (!body || typeof body !== 'object' || Array.isArray(body) || !['on', 'off'].includes(body.action as string) ||
           (body.place !== undefined && body.place !== null && typeof body.place !== 'string')) return reply(400, { error: 'Provide action "on" or "off" and an optional place id' })
-        if (body.action === 'off') { bot.farm.off('Web-UI'); broadcast(); return reply(202, { farm: bot.farm.status() }) }
+        let filter: string | null = null
+        if (collecting) {
+          try { filter = itemFilter(body.item) } catch (error) { return reply(400, { error: error instanceof Error ? error.message : 'Invalid item' }) }
+        }
+        if (body.action === 'off') { job.off('Web-UI'); broadcast(); return reply(202, { [key]: job.status() }) }
         const p = bot.state.position
-        if (bot.state.status !== 'spawned' || !p) return reply(409, { error: 'Bot must be spawned before farming' })
+        if (bot.state.status !== 'spawned' || !p) return reply(409, { error: 'Bot must be spawned before ' + (collecting ? 'collecting' : 'farming') })
         const start = (anchor: { x: number; z: number; label: string }) => {
-          const error = bot.farm.start(anchor, false)
+          const error = collecting ? bot.collector.start(anchor, filter) : bot.farm.start(anchor, false)
           if (error) return reply(409, { error })
-          broadcast(); reply(202, { farm: bot.farm.status() })
+          broadcast(); reply(202, { [key]: job.status() })
         }
         if (!body.place) return start({ x: p.x, z: p.z, label: 'Bot-Position' })
         const dimension = dimensionId(bot.state.dimension)
         if (!places || dimension === null) return reply(409, { error: 'Places are unavailable' })
+        const session = bot.state.worldSession
         void places.list(dimension).then(({ pois }) => {
+          if (session !== bot.state.worldSession || dimension !== dimensionId(bot.state.dimension)) return reply(409, { error: 'World changed; repeat start' })
           const poi = pois.find(entry => entry.id === body.place)
           if (!poi) return reply(404, { error: 'Place not found in this dimension' })
           start({ x: poi.x + .5, z: poi.z + .5, label: poi.name })

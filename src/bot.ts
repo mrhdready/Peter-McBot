@@ -5,6 +5,7 @@ import { Navigator } from './navigation.js'
 import { RoutePlanner, type PreviewRoute, type Target } from './pathfinder.js'
 import { WorldError } from './world.js'
 import type { ContainerWindow, Inventory, TransferStep } from './inventory.js'
+import { Collector } from './collector.js'
 import { Farmer } from './farming.js'
 
 export interface BotClient extends EventEmitter {
@@ -14,8 +15,8 @@ export interface BotClient extends EventEmitter {
   entityId?: unknown
 }
 /** Who asked for a navigation via chat; navigations from the web UI have none. */
-export type NavigationOrigin = { player: string; label: string; give?: number; chest?: number; farm?: number }
-export type Command = 'connect' | 'disconnect' | 'stop_navigation' | { type: 'navigate'; x: number; z: number; origin?: NavigationOrigin }
+export type NavigationOrigin = { player: string; label: string; give?: number; chest?: number; farm?: number; collect?: number }
+export type Command = 'connect' | 'disconnect' | 'stop_navigation' | { type: 'navigate'; x: number; z: number; y?: number; origin?: NavigationOrigin }
 export type NavigationEnd = (origin: NavigationOrigin | null, status: string, message: string | null) => void
 export type ClientFactory = (config: Config) => BotClient
 /** One line of the web UI's chat log; `event` lines mark connects and disconnects. */
@@ -47,6 +48,7 @@ export class BotController {
   readonly state: WorldState
   /** The farming mode; it lives with the bot so the web UI can switch it without chat commands. */
   readonly farm: Farmer
+  readonly collector: Collector
   private navigator: Navigator
   private commands: Command[] = []
   private client: BotClient | null = null
@@ -83,6 +85,7 @@ export class BotController {
       get state () { return bot.state }, get navigator () { return bot.navigator }, reach: config.radius * 16,
       now: () => this.now(),
       enqueue: command => this.enqueue(command),
+      activate: () => this.collector.off('Farming gestartet'),
       entityId: () => this.client?.entityId,
       useChest: (chest, next) => this.useChest(chest, next),
       cancelChest: () => this.cancelChest(),
@@ -93,11 +96,23 @@ export class BotController {
       },
       publish: () => { this.publishAt = 0 }
     })
+    this.collector = new Collector({
+      get state () { return bot.state }, get navigator () { return bot.navigator }, reach: config.radius * 16,
+      now: () => this.now(), enqueue: command => this.enqueue(command),
+      activate: () => { this.farm.off('Collector gestartet'); this.cancelChest() },
+      stopNavigation: () => {
+        this.commands = this.commands.filter(command => typeof command !== 'object' || command.origin?.collect === undefined)
+        if (!this.runActive || this.runOrigin?.collect === undefined) return
+        this.navigator.stop(); this.settleNavigation()
+      },
+      publish: () => { this.publishAt = 0 }
+    })
   }
 
   enqueue (command: Command) {
     if (this.stopped) return false
     if (typeof command === 'object' && (!command || command.type !== 'navigate' || ![command.x, command.z].every(n => Number.isInteger(n) && Math.abs(n) <= 30000000) ||
+      (command.y !== undefined && (!Number.isFinite(command.y) || Math.abs(command.y) > 30000000)) ||
       (command.origin !== undefined && (typeof command.origin?.player !== 'string' || typeof command.origin.label !== 'string')))) return false
     if (command === 'stop_navigation') {
       this.commands = this.commands.filter(command => typeof command === 'string' && command !== 'stop_navigation')
@@ -120,17 +135,20 @@ export class BotController {
     this.state.tick++
     for (const command of this.commands.splice(0)) {
       if (typeof command === 'object') {
+        if (command.origin?.collect !== undefined && !this.collector.acceptsNavigation(command.origin.collect)) continue
+        if (command.origin?.farm !== undefined && !this.farm.acceptsNavigation(command.origin.farm)) continue
         this.previewJob?.cancel()
         // A target from the web UI ends farming; the farmer's own targets keep it running.
-        if (!command.origin) this.farm.off('UI-Navigation')
+        if (!command.origin) { this.farm.off('UI-Navigation'); this.collector.off('UI-Navigation') }
         this.cancelChest()
         // A new target replaces the running one; report that run as stopped first.
         if (this.runActive) { this.runActive = false; this.endRun(this.runOrigin, 'stopped', 'Neues Ziel gesetzt.') }
-        this.navigator.start({ x: command.x, z: command.z }, this.now())
+        this.navigator.start({ x: command.x, z: command.z, ...(command.y !== undefined ? { y: command.y } : {}) }, this.now())
         this.runActive = true; this.runOrigin = command.origin ? { ...command.origin } : null
         this.settleNavigation()
       } else if (command === 'stop_navigation') {
         this.farm.off('Stopp')
+        this.collector.off('Stopp')
         this.cancelChest()
         this.navigator.stop()
         this.settleNavigation()
@@ -160,6 +178,7 @@ export class BotController {
         }
         this.stepChest(send)
         this.farm.step(send)
+        this.collector.step(send)
         this.state.inventory.expire(this.now())
       }
       catch (error) { this.failed(error instanceof Error ? error.message : String(error)) }
@@ -289,6 +308,11 @@ export class BotController {
         if (this.state.players.has(id)) this.movePlayer(packet.runtime_entity_id, position)
         else entity.position = position
       })
+      client.on('move_entity', (packet: { runtime_entity_id: bigint | string; position: Position }) => {
+        if (!active() || !isPosition(packet.position)) return
+        const entity = this.state.players.get(String(packet.runtime_entity_id)) ?? this.state.items.get(String(packet.runtime_entity_id))
+        if (entity) entity.position = { ...packet.position }
+      })
       // Dropped items (e.g. from harvesting) until someone picks them up or they despawn; the farmer walks onto them.
       client.on('add_item_entity', (packet: { runtime_entity_id: bigint | string; entity_id_self?: bigint | string; item?: { network_id?: number; count?: number }; position: Position }) => {
         if (!active() || !isPosition(packet.position)) return
@@ -296,8 +320,12 @@ export class BotController {
         this.state.items.set(id, { uniqueId: String(packet.entity_id_self ?? id), name: this.state.inventory.itemName(packet.item?.network_id ?? 0),
           count: packet.item?.count ?? 0, position: { ...packet.position } })
       })
-      client.on('take_item_entity', (packet: { runtime_entity_id: bigint | string }) => {
-        if (active()) this.state.items.delete(String(packet.runtime_entity_id))
+      client.on('take_item_entity', (packet: { runtime_entity_id: bigint | string; target?: bigint | string | number }) => {
+        if (!active()) return
+        const id = String(packet.runtime_entity_id)
+        const item = this.state.items.get(id)
+        if (item && packet.target !== undefined && String(packet.target) === String(client.entityId)) this.collector.pickedUp(item)
+        this.state.items.delete(id)
       })
       // remove_entity carries the unique entity ID, which differs from the runtime ID on BDS.
       client.on('remove_entity', (packet: { entity_id_self: bigint | string }) => {
@@ -533,7 +561,8 @@ export class BotController {
 
   // The farmer's own runs go back to the farmer; all others to onNavigationEnd.
   private endRun (origin: NavigationOrigin | null, status: string, message: string | null) {
-    if (origin?.farm !== undefined) this.farm.navigationEnded(origin.farm, status)
+    if (origin?.collect !== undefined) this.collector.navigationEnded(origin.collect, status)
+    else if (origin?.farm !== undefined) this.farm.navigationEnded(origin.farm, status)
     else this.onNavigationEnd(origin, status, message)
   }
 
@@ -568,6 +597,7 @@ export class BotController {
     this.chestJob?.reject(new Error('Verbindung getrennt.'))
     this.chestJob = null
     this.farm.disconnected()
+    this.collector.disconnected()
     this.navigator.reset()
     this.settleNavigation()
     this.state.resetWorld()

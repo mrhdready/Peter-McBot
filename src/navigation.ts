@@ -90,7 +90,7 @@ export class Navigator {
 
   start (target: Target, now: number) {
     this.stop()
-    this.world.navigation = { status: 'planning', target: { x: target.x, z: target.z }, feetY: null, path: [], remaining: 0, replans: 0, corrections: 0, message: null }
+    this.world.navigation = { status: 'planning', target: { ...target }, feetY: null, path: [], remaining: 0, replans: 0, corrections: 0, message: null }
     const p = this.world.position
     if (this.world.status !== 'spawned' || !p) return this.fail('Bot ist nicht verbunden und gespawnt.')
     if (![target.x, target.z].every(n => Number.isInteger(n) && Math.abs(n) <= 30000000)) return this.fail('X und Z müssen ganzzahlige Blockkoordinaten sein.')
