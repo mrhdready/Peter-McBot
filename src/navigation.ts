@@ -95,7 +95,11 @@ export class Navigator {
     if (this.world.status !== 'spawned' || !p) return this.fail('Bot ist nicht verbunden und gespawnt.')
     if (![target.x, target.z].every(n => Number.isInteger(n) && Math.abs(n) <= 30000000)) return this.fail('X und Z müssen ganzzahlige Blockkoordinaten sein.')
     const feetY = this.world.terrain.surfaceAt(p.x, p.z, p.y - EYE_HEIGHT + .08, p.y - EYE_HEIGHT - .08)
-    if (feetY === null) return this.fail('Startposition hat keine bekannte, sichere Standfläche mit ausreichend Freiraum.')
+    if (feetY === null) {
+      this.fail('Startposition hat keine bekannte, sichere Standfläche mit ausreichend Freiraum.')
+      this.settling = false; this.neutral = false
+      return
+    }
     this.world.navigation.feetY = feetY
     this.grounded = true; this.velocityY = -.0784; this.fallFrom = feetY; this.settling = false
     if (!this.world.chunks.has(Math.floor(target.x / 16) + ':' + Math.floor(target.z / 16))) return this.fail('Ziel liegt außerhalb der geladenen Chunks.')

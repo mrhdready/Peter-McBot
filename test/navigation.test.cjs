@@ -175,6 +175,20 @@ test('stop sends one neutral input and no later movement; unsafe targets send no
   assert.ok(sent.at(-1).params.tick > lastTick + 900n, 'The input clock advances through idle periods')
 })
 
+test('an obstructed start keeps its original error without attempting to land', async t => {
+  const { world, navigator, step, sent } = await setup(t)
+  world.updateBlock({ x: 0, y: 72, z: 0 }, hash('stone'))
+  const position = { ...world.position }
+  navigator.start({ x: 4, z: 0 }, 0)
+  const message = world.navigation.message
+  assert.match(message, /Startposition/)
+  for (let i = 0; i < 5; i++) step()
+  assert.equal(world.navigation.status, 'error')
+  assert.equal(world.navigation.message, message)
+  assert.deepEqual(world.position, position)
+  assert.equal(sent.length, 0)
+})
+
 test('obstacles replan; authoritative corrections stop height changes and old ticks cannot overwrite state', async t => {
   const { world, navigator, step, sent } = await setup(t)
   navigator.start({ x: 4, z: 0 }, 0)

@@ -9,7 +9,7 @@ type PacketItem = { network_id?: number; count?: number; has_stack_id?: boolean;
 type ResponseSlot = { slot?: number; count?: number; item_stack_id?: number }
 export type StackResponse = { status?: string | number; request_id?: number; containers?: { slot_type?: { container_id?: string | number }; slots?: ResponseSlot[] }[] }
 // A drop resolves with the dropped total; a placement (raw) resolves with the server's answer, accepted or not.
-type Pending = { total: number; deadline: number; name?: string; resolve: (value: never) => void; reject: (error: Error) => void }
+type Pending = { replacements?: { slots: (Slot | null)[]; index: number; item: Slot | null }[]; total: number; deadline: number; name?: string; resolve: (value: never) => void; reject: (error: Error) => void }
 export type InventoryItem = { name: string; count: number }
 /** One slot in a stack request: the container name the server uses, the slot and the stack ID the server assigned (0 for empty). */
 export type SlotRef = { container: string; slot: number; stackId: number }
@@ -27,8 +27,8 @@ export const EMPTY_ITEM = { network_id: 0, count: 0, metadata: 0, has_stack_id: 
 const log = (message: string) => console.log('[inv] ' + message)
 /** "minecraft:dirt" → "dirt"; other namespaces stay visible. */
 export const shortName = (name: string) => name.replace(/^minecraft:/, '')
-/** The container name of one of the bot's own slots. */
-export const playerContainer = (slot: number) => slot < HOTBAR ? 'hotbar' : 'inventory'
+/** Main slots use the combined container so request indices match inventory_content (9–35). */
+export const playerContainer = (slot: number) => slot < HOTBAR ? 'hotbar' : 'hotbar_and_inventory'
 
 let itemsByName: Record<string, { stackSize?: number }> | null = null
 /** Maximum stack size of an item from minecraft-data; 64 when the item is unknown. */
@@ -161,11 +161,28 @@ export class Inventory {
 
   /** Moves one stack portion with a single `place` action; resolves with the server's answer, whether accepted or not. */
   place (send: Send, move: Move, now: number): Promise<StackResponse> {
+    return this.move(send, move, now, false)
+  }
+
+  /** Exchanges two complete stacks, including their item metadata, after server confirmation. */
+  swap (send: Send, move: Move, now: number): Promise<StackResponse> {
+    return this.move(send, move, now, true)
+  }
+
+  private move (send: Send, move: Move, now: number, swap: boolean): Promise<StackResponse> {
+    const list = (ref: SlotRef) => PLAYER_CONTAINERS.has(ref.container) ? this.slots : ref.container === CHEST_CONTAINER ? this.window?.slots : undefined
+    const from = list(move.from); const to = list(move.to)
+    if (!from || !to) return Promise.reject(new Error('Inventarfenster nicht geöffnet.'))
+    const source = from[move.from.slot]
+    const target = to[move.to.slot]
+    const arriving = !swap && target ? target : source
+    const replacements = [{ slots: to, index: move.to.slot, item: arriving && { ...arriving } }]
+    if (swap) replacements.push({ slots: from, index: move.from.slot, item: target && { ...target } })
     const ref = (slot: SlotRef) => ({ slot_type: { container_id: slot.container, dynamic_container_id: undefined }, slot: slot.slot, stack_id: slot.stackId })
     const id = this.requestId()
     log(`Lege ${move.count} ${move.name} von ${move.from.container} ${move.from.slot} nach ${move.to.container} ${move.to.slot}, Anfrage ${id}.`)
-    send('item_stack_request', { requests: [{ request_id: id, actions: [{ type_id: 'place', legacy_type_id: 1, count: move.count, source: ref(move.from), destination: ref(move.to) }], custom_names: [], cause: 'chat_public' }] })
-    return new Promise((resolve, reject) => this.pending.set(id, { total: move.count, name: move.name, deadline: now + RESPONSE_TIMEOUT_MS, resolve: resolve as (value: never) => void, reject }))
+    send('item_stack_request', { requests: [{ request_id: id, actions: [{ type_id: swap ? 'swap' : 'place', legacy_type_id: swap ? 2 : 1, ...(swap ? {} : { count: move.count }), source: ref(move.from), destination: ref(move.to) }], custom_names: [], cause: 'chat_public' }] })
+    return new Promise((resolve, reject) => this.pending.set(id, { replacements, total: move.count, name: move.name, deadline: now + RESPONSE_TIMEOUT_MS, resolve: resolve as (value: never) => void, reject }))
   }
 
   /** Applies the server's answers: confirmed slots take the reported counts and stack IDs. */
@@ -190,9 +207,10 @@ export class Inventory {
         for (const entry of container.slots ?? []) {
           const index = entry.slot as number
           if (!Number.isInteger(index) || index < 0 || index >= slots.length) continue
-          const slot = slots[index]
+          const replacement = pending.replacements?.find(change => change.slots === slots && change.index === index)
+          const slot = replacement ? replacement.item : slots[index]
           if (!entry.count) slots[index] = null
-          else if (slot) { slot.count = entry.count; if (Number.isInteger(entry.item_stack_id)) slot.stackId = entry.item_stack_id! }
+          else if (slot) slots[index] = { ...slot, count: entry.count, stackId: Number.isInteger(entry.item_stack_id) ? entry.item_stack_id! : slot.stackId }
           // A slot that was empty now holds the moved item; only a placement says which one.
           else if (pending.name !== undefined) slots[index] = { name: pending.name, count: entry.count, stackId: entry.item_stack_id ?? 0, raw: null }
         }

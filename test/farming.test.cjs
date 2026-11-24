@@ -14,6 +14,7 @@ const item = (networkId, count, stackId) => ({ network_id: networkId, count, met
 // the queued items), hands drops to the bot when an input packet stands on their column, and plants the held seed after a top-face click.
 function setup (t, { inventory = [item(300, 5, 11)] } = {}) {
   let time = 1000
+  const serverSlots = Array.from({ length: 36 }, (_, i) => inventory[i] ?? { network_id: 0 })
   const crops = new Map()
   const blocks = new Map()
   const drops = []
@@ -24,6 +25,26 @@ function setup (t, { inventory = [item(300, 5, 11)] } = {}) {
     sent = []
     queue (name, params) {
       this.sent.push([name, params])
+      if (name === 'item_stack_request') queueMicrotask(() => {
+        const request = params.requests[0]
+        const action = request.actions[0]
+        for (const ref of [action.source, action.destination]) {
+          assert.equal(ref.slot_type.container_id, ref.slot < 9 ? 'hotbar' : 'hotbar_and_inventory')
+          assert.equal(ref.stack_id, serverSlots[ref.slot].stack_id ?? 0)
+        }
+        const from = action.source.slot; const to = action.destination.slot
+        if (action.type_id === 'swap') [serverSlots[from], serverSlots[to]] = [serverSlots[to], serverSlots[from]]
+        else {
+          assert.equal(action.type_id, 'place')
+          assert.equal(action.count, serverSlots[from].count)
+          serverSlots[to] = { ...serverSlots[from], count: (serverSlots[to].count ?? 0) + action.count, stack_id: 1000 + to }
+          serverSlots[from] = { network_id: 0 }
+        }
+        this.emit('item_stack_response', { responses: [{ status: 'ok', request_id: request.request_id, containers: [{
+          slot_type: { container_id: 'hotbar_and_inventory' },
+          slots: [from, to].map(slot => ({ slot, count: serverSlots[slot].count ?? 0, item_stack_id: serverSlots[slot].stack_id ?? 0 }))
+        }] }] })
+      })
       if (name === 'player_auth_input') {
         for (const action of params.block_action ?? []) {
           const p = action.position
@@ -258,6 +279,44 @@ test('cocoa uses a reachable floor below the pod and replants on the original lo
   }
 })
 
+test('cocoa at head height is replanted from beside the pod after collecting its drops', async t => {
+  const { bot, crops, blocks, drops, pickups, client, run } = setup(t, { inventory: [item(305, 64, 19)] })
+  crops.set(key(1, 72, 0), { kind: 'cocoa', growth: 2, direction: 0 })
+  blocks.set(key(1, 72, 1), 'minecraft:jungle_log')
+  drops.push({ runtime_entity_id: 50n, entity_id_self: 51n, item: { network_id: 305, count: 1 }, position: { x: 1.5, y: 71.2, z: .5 } })
+  bot.farm.configure({ field: false, blocks: false, cane: false, cocoa: true, berries: false })
+  bot.farm.start({ x: .5, z: .5, label: 'Basis' }, true)
+  assert.ok(await run(() => !bot.farm.status().enabled))
+  assert.deepEqual(pickups, ['50'])
+  assert.equal(crops.get(key(1, 72, 0)).growth, 0)
+  const click = client.sent.find(([name]) => name === 'inventory_transaction')[1].transaction.transaction_data
+  assert.ok(Math.floor(click.player_pos.x) !== 1 || Math.floor(click.player_pos.z) !== 0,
+    'Leave the drop column before planting cocoa into the head space')
+})
+
+test('cocoa on different trunk faces requires walking around the tree before harvesting and replanting', async t => {
+  const { bot, crops, blocks, client, run } = setup(t, { inventory: [item(305, 64, 19)] })
+  const pods = [[2, 1, 0], [1, 2, 3], [2, 3, 2], [3, 2, 1]]
+  for (const [x, z, direction] of pods) crops.set(key(x, 72, z), { kind: 'cocoa', growth: 2, direction })
+  for (let y = 71; y <= 75; y++) blocks.set(key(2, y, 2), 'minecraft:jungle_log')
+  bot.state.terrain = new Terrain((x, y, z) => Math.abs(x) < 10 && Math.abs(z) < 10
+    ? { boxes: y === 70 || (x === 2 && z === 2 && y >= 71 && y <= 75) ? [[0, 0, 0, 1, 1, 1]] : [], support: y === 70 || (x === 2 && z === 2 && y >= 71 && y <= 75) } : null)
+  bot.state.planningTerrain = bot.state.terrain
+  bot.farm.configure({ field: false, blocks: false, cane: false, cocoa: true, berries: false })
+  bot.farm.start({ x: .5, z: .5, label: 'Basis' }, true)
+  assert.ok(await run(() => !bot.farm.status().enabled))
+  for (const [x, z, direction] of pods) assert.deepEqual(crops.get(key(x, 72, z)), { kind: 'cocoa', growth: 0, direction })
+  const actions = client.sent.filter(([name, p]) => name === 'player_auth_input' && p.block_action?.some(a => a.action === 'start_break'))
+  assert.equal(actions.length, 4)
+  for (const [, packet] of actions) {
+    const pod = packet.block_action[0].position
+    const direction = pods.find(([x, z]) => x === pod.x && z === pod.z)[2]
+    const [dx, dz] = [[0, 1], [-1, 0], [0, -1], [1, 0]][direction]
+    assert.ok((packet.position.x - pod.x - .5) * dx + (packet.position.z - pod.z - .5) * dz <= .08,
+      'Harvest from the exposed side of each pod, without reaching through the trunk')
+  }
+})
+
 test('blocked anchor return stays visible and retries; manual navigation cancels farming', async t => {
   const {bot, run, now} = setup(t)
   bot.farm.start({x:.5,y:75,z:.5,label:'Oben'})
@@ -296,4 +355,64 @@ test('block fruit uses sustained breaking; stems, decoration and unripe crops st
   for (const [name,params] of client.sent.filter(([name])=>name==='player_auth_input' || name==='mob_equipment')) {
     assert.ok(serializer.createPacketBuffer({name,params}).length>0,'Sustained break packets serialize')
   }
+})
+
+
+test('farming swaps seeds from slot 35 into a full hotbar and preserves both items', async t => {
+  const inventory = Array.from({ length: 9 }, (_, i) => item(302, 64, i + 1))
+  inventory[35] = item(300, 5, 99)
+  const { bot, client, crops, reports, run } = setup(t, { inventory })
+  crops.set(key(1, 71, 1), { kind: 'wheat', growth: 7 })
+  bot.farm.start({ x: .5, z: .5, label: 'Bot' }, true)
+  assert.ok(await run(() => !bot.farm.status().enabled))
+  assert.ok(reports.includes('1 Weizen geerntet, 1 neu gepflanzt.'))
+  const swap = client.sent.find(([name]) => name === 'item_stack_request')[1].requests[0].actions[0]
+  assert.equal(swap.type_id, 'swap')
+  assert.equal(swap.source.slot, 35)
+  assert.equal(bot.state.inventory.packetItem(0).network_id, 300)
+  assert.equal(bot.state.inventory.packetItem(35).network_id, 302)
+  assert.deepEqual(bot.state.inventory.items(), [{ name: 'minecraft:dirt', count: 576 }, { name: 'minecraft:wheat_seeds', count: 5 }])
+})
+
+test('empty hand moves a full hotbar stack into main inventory before harvesting berries', async t => {
+  const inventory = Array.from({ length: 9 }, (_, i) => item(302, 64, i + 1))
+  const { bot, client, crops, run } = setup(t, { inventory })
+  crops.set(key(1, 71, 1), { kind: 'sweet_berry_bush', growth: 3 })
+  bot.farm.configure({field:false, blocks:false, cane:false, cocoa:false, berries:true})
+  bot.farm.start({ x: .5, z: .5, label: 'Bot' }, true)
+  assert.ok(await run(() => !bot.farm.status().enabled))
+  assert.equal(crops.get(key(1, 71, 1)).growth, 1)
+  assert.equal(bot.state.inventory.slotList()[0], null)
+  assert.equal(bot.state.inventory.packetItem(9).network_id, 302)
+  const equipment = client.sent.find(([name]) => name === 'mob_equipment')[1]
+  assert.equal(equipment.item.network_id, 0)
+  assert.equal(equipment.selected_slot, 0)
+})
+
+test('empty hand can merge matching stacks when all inventory slots are occupied', async t => {
+  const inventory = Array.from({ length: 36 }, (_, i) => item(302, 64, i + 1))
+  inventory[0] = item(302, 1, 1)
+  inventory[35] = item(302, 63, 36)
+  const { bot, crops, run } = setup(t, { inventory })
+  crops.set(key(1, 71, 1), { kind: 'sweet_berry_bush', growth: 3 })
+  bot.farm.configure({field:false, blocks:false, cane:false, cocoa:false, berries:true})
+  bot.farm.round = () => bot.farm.holdEmpty({ x: 1.5, y: 71.5, z: 1.5 })
+  bot.farm.start({ x: .5, z: .5, label: 'Bot' }, true)
+  assert.ok(await run(() => !bot.farm.status().enabled))
+  assert.equal(bot.state.inventory.slotList()[0], null)
+  assert.equal(bot.state.inventory.slotList()[35].count, 64)
+})
+
+test('empty hand reports a full inventory without discarding items', async t => {
+  const inventory = Array.from({ length: 36 }, (_, i) => item(302, 64, i + 1))
+  const { bot, client, crops, reports, run } = setup(t, { inventory })
+  crops.set(key(1, 71, 1), { kind: 'sweet_berry_bush', growth: 3 })
+  bot.farm.configure({field:false, blocks:false, cane:false, cocoa:false, berries:true})
+  bot.farm.round = () => bot.farm.holdEmpty({ x: 1.5, y: 71.5, z: 1.5 })
+  bot.farm.start({ x: .5, z: .5, label: 'Bot' }, true)
+  assert.ok(await run(() => !bot.farm.status().enabled))
+  assert.equal(crops.get(key(1, 71, 1)).growth, 3)
+  assert.ok(reports.some(report => report.includes('freier Hotbar-Slot')))
+  assert.equal(client.sent.some(([name]) => name === 'item_stack_request'), false)
+  assert.equal(bot.state.inventory.items()[0].count, 2304)
 })

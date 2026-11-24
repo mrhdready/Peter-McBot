@@ -246,7 +246,7 @@ test('inventory packets fill the item totals; drops send one request per item, a
   const request = sent[1].requests[0]
   assert.ok(request.request_id < 0)
   assert.deepEqual(request.actions.map(action => [action.type_id, action.count, action.source.slot_type.container_id, action.source.slot, action.source.stack_id, action.randomly]),
-    [['drop', 64, 'hotbar', 0, 7, false], ['drop', 2, 'inventory', 12, 8, false]])
+    [['drop', 64, 'hotbar', 0, 7, false], ['drop', 2, 'hotbar_and_inventory', 12, 8, false]])
   confirm(client, request, [['hotbar', 0, 0, 0], ['inventory', 12, 3, 11]])
   assert.equal(await done, 66)
   assert.ok(inventory.revision > revision)
@@ -346,6 +346,9 @@ function chestSetup (t, chests, ownItems) {
     requests.push(action)
     assert.equal(action.type_id, 'place')
     const side = container => container === 'container' ? open.slots : own
+    for (const ref of [action.source, action.destination]) {
+      if (ref.slot_type.container_id !== 'container' && ref.slot >= 9) assert.equal(ref.slot_type.container_id, 'hotbar_and_inventory')
+    }
     const from = side(action.source.slot_type.container_id); const to = side(action.destination.slot_type.container_id)
     const source = from[action.source.slot]; const target = to[action.destination.slot]
     assert.ok(source && source.stack === action.source.stack_id && action.count <= source.count, 'Source slot and stack ID match the server')
@@ -403,7 +406,7 @@ test('put clicks the nearest chest, sends an input tick after the click, fills p
   assert.equal(clicks.length, 1)
   assert.equal(clicks[0].next, 'player_auth_input', 'The server handles the click only with a following input packet')
   assert.deepEqual(requests.map(action => [action.source.slot_type.container_id, action.source.slot, action.destination.slot_type.container_id, action.destination.slot, action.count]),
-    [['hotbar', 0, 'container', 0, 4], ['hotbar', 0, 'container', 2, 60], ['inventory', 9, 'container', 2, 4], ['inventory', 9, 'container', 3, 6]])
+    [['hotbar', 0, 'container', 0, 4], ['hotbar', 0, 'container', 2, 60], ['hotbar_and_inventory', 9, 'container', 2, 4], ['hotbar_and_inventory', 9, 'container', 3, 6]])
   assert.equal(last(), '74 dirt in 1 Kiste abgelegt.')
   assert.equal(closes(), 1)
   assert.deepEqual(bot.state.inventory.items(), [{ name: 'minecraft:torch', count: 3 }])

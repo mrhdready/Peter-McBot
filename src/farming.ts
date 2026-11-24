@@ -16,7 +16,8 @@ import type { ChestPlanner, ChestResult, Command } from './bot.js'
 import type { Position, WorldState } from './state.js'
 import type { Navigator } from './navigation.js'
 import { FARM_CROPS, WorldError, type CropKind } from './world.js'
-import { CHEST_CONTAINER, nextTransfer, playerContainer, shortName, type Inventory, type Slot, type StackResponse, type TransferStep } from './inventory.js'
+import { isDeepStrictEqual } from 'node:util'
+import { CHEST_CONTAINER, nextTransfer, playerContainer, shortName, stackSize, type Move, type Inventory, type Slot, type StackResponse, type TransferStep } from './inventory.js'
 import { CHEST_IDS, chestStandSpot } from './chat-commands.js'
 
 import { FarmSettings, CROP_GROUP } from './farm-settings.js'
@@ -395,12 +396,42 @@ export class Farmer {
   }
 
   private async holdEmpty (look: Position): Promise<number | null> {
-    const slot = this.host.state.inventory.slotList().findIndex((item, index) => index < 9 && item === null)
+    const slot = await this.freeHotbarSlot()
     if (slot < 0) { this.problem('emptyhand', 'Ein freier Hotbar-Slot wird zum Ernten benötigt.'); return null }
     await this.act(send => send('mob_equipment', { runtime_entity_id: this.host.entityId(), item: this.host.state.inventory.packetItem(slot), slot, selected_slot: slot, window_id: 'inventory' }))
     this.equipped = null
     await this.ticks(150, () => false, send => this.host.navigator.lookAt(send, look))
     return slot
+  }
+
+  private async moveStack (move: Move, swap = false) {
+    const inventory = this.host.state.inventory
+    const box: { request?: Promise<StackResponse | null> } = {}
+    await this.act(send => { box.request = (swap ? inventory.swap(send, move, this.host.now()) : inventory.place(send, move, this.host.now())).catch(() => null) })
+    const response = await this.external(box.request!)
+    this.equipped = null
+    return response !== null && (response.status === 'ok' || response.status === 0)
+  }
+
+  // Clear a hotbar slot without discarding items; only use a merge if the entire stack fits.
+  private async freeHotbarSlot (): Promise<number> {
+    const inventory = this.host.state.inventory
+    const slots = inventory.slotList()
+    const empty = slots.findIndex((slot, i) => i < 9 && slot === null)
+    if (empty >= 0) return empty
+    for (let from = 0; from < 9; from++) {
+      const source = slots[from]!
+      let to = slots.findIndex((slot, i) => i >= 9 && slot === null)
+      if (to < 0) to = slots.findIndex((slot, i) => i !== from && slot !== null && slot.name === source.name &&
+        slot.raw !== null && source.raw !== null && isDeepStrictEqual({ ...slot.raw as object, count: 0, stack_id: 0 }, { ...source.raw as object, count: 0, stack_id: 0 }) &&
+        slot.count + source.count <= stackSize(source.name))
+      if (to < 0) continue
+      const move = { name: source.name, count: source.count, from: { container: playerContainer(from), slot: from, stackId: source.stackId },
+        to: { container: playerContainer(to), slot: to, stackId: slots[to]?.stackId ?? 0 } }
+      if (!(await this.moveStack(move))) return -1
+      return inventory.slotList()[from] === null ? from : -1
+    }
+    return -1
   }
 
   // Walks onto the columns of drops around the standing place until they are picked up (at most PICKUP_WALKS walks).
@@ -497,15 +528,12 @@ export class Farmer {
     if (index < 0) {
       const from = slots.findIndex(matches)
       if (from < 0) return null
-      const to = slots.findIndex((slot, i) => i < 9 && slot === null)
-      if (to < 0) { this.problem('hotbar', 'Meine Hotbar ist voll; ich kann kein Saatgut in die Hand nehmen.'); return null }
+      const empty = slots.findIndex((slot, i) => i < 9 && slot === null)
+      const to = empty < 0 ? 0 : empty
       const source = slots[from]!
       log(`Lege ${source.count} ${seed} aus Slot ${from} in die Hotbar (${to}).`)
-      const move = { name: source.name, count: source.count, from: { container: playerContainer(from), slot: from, stackId: source.stackId }, to: { container: 'hotbar', slot: to, stackId: 0 } }
-      const box: { request?: Promise<StackResponse | null> } = {}
-      await this.act(send => { box.request = inventory.place(send, move, this.host.now()).catch(() => null) })
-      const response = await this.external(box.request!)
-      if (!response || (response.status !== 'ok' && response.status !== 0)) { log('Saatgut ließ sich nicht in die Hotbar legen.'); return null }
+      const move = { name: source.name, count: source.count, from: { container: playerContainer(from), slot: from, stackId: source.stackId }, to: { container: playerContainer(to), slot: to, stackId: slots[to]?.stackId ?? 0 } }
+      if (!(await this.moveStack(move, empty < 0))) { log('Saatgut ließ sich nicht in die Hotbar legen.'); return null }
       slots = inventory.slotList()
       index = matches(slots[to]) ? to : -1
       if (index < 0) return null
@@ -623,7 +651,8 @@ export class Farmer {
     for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
       const x = first.x + dx; const z = first.z + dz
       const support = first.kind === 'cocoa' ? [[0, 1], [-1, 0], [0, -1], [1, 0]][first.direction ?? -1] : null
-      if (support && dx * support[0] + dz * support[1] > 0) continue
+      // Replant beside the pod so the new cocoa cannot occupy the bot's head space.
+      if (first.kind === 'cocoa' && (!support || (!dx && !dz) || dx * support[0] + dz * support[1] > 0)) continue
       // Farmland top, level ground, a slab, one block up or down.
       // Include ground below tall cane and cocoa, including farmland and half slabs; prefer the bot's current floor.
       const heights = Array.from({ length: 7 }, (_, i) => first.y + 1 - i).flatMap(y => [y, y - .0625, y - .5])
@@ -632,8 +661,14 @@ export class Farmer {
         Math.hypot(first.x - x, first.y + .5 - y - EYE_HEIGHT, first.z - z) <= REACH)
       if (feetY === undefined) continue
       const eye = { x: x + .5, y: feetY + 1.62, z: z + .5 }
-      const members = targets.filter(target => Math.max(Math.abs(target.x - x), Math.abs(target.z - z)) <= 1 &&
-        Math.hypot(target.x + .5 - eye.x, target.y + .5 - eye.y, target.z + .5 - eye.z) <= REACH)
+      const members = targets.filter(target => {
+        if (target.kind === 'cocoa') {
+          const support = [[0, 1], [-1, 0], [0, -1], [1, 0]][target.direction ?? -1]
+          if (!support || (x === target.x && z === target.z) || (x - target.x) * support[0] + (z - target.z) * support[1] > 0) return false
+        }
+        return Math.max(Math.abs(target.x - x), Math.abs(target.z - z)) <= 1 &&
+          Math.hypot(target.x + .5 - eye.x, target.y + .5 - eye.y, target.z + .5 - eye.z) <= REACH
+      })
       if (!members.includes(first)) continue
       const distance = Math.hypot(x + .5 - p.x, z + .5 - p.z)
       if (!best || members.length > best.members.length || (members.length === best.members.length && distance < best.distance)) best = { stand: { x, z, feetY }, members, distance }
