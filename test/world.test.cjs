@@ -248,3 +248,46 @@ test('map handles confirmed air, surface layers, cancellation and session resets
   await assert.rejects(pending, /World changed/)
   await assert.rejects(world.surfaceMap(), /not ready/)
 })
+
+test('farm scanning uses Bedrock states, preserves cane bases and requires mature matching fruit stems at any height', async t => {
+  const world = await setup(t, {x:.5,y:72.62,z:.5})
+  // Known sections on two floors; all unspecified cells are confirmed air.
+  for (const sy of [4, 12]) {
+    if (!world.chunks.has('0:0')) world.chunks.set('0:0', {x:0,z:0,sections:new Map(),attempts:new Map(),requests:new Map()})
+    world.chunks.get('0:0').sections.set(sy, {data:new Uint32Array(8192).fill(registry.blocksByName.air.defaultState)})
+  }
+  const state = (name, props = {}) => {
+    const block = registry.blocksByName[name]
+    for (let id = block.minStateId; id <= block.maxStateId; id++) {
+      if (Object.entries(props).every(([key,value]) => registry.blockStates[id].states[key]?.value === value)) return id
+    }
+    assert.fail('No state: ' + name + JSON.stringify(props))
+  }
+  const put = (x,y,z,name,props) => {
+    const data = world.chunks.get('0:0').sections.get(Math.floor(y/16)).data
+    data[((x&15)<<8)|((y&15)<<4)|(z&15)] = state(name,props)
+  }
+  put(1,71,1,'reeds'); put(1,72,1,'reeds'); put(1,73,1,'reeds')
+  put(3,71,1,'melon_block'); put(4,71,1,'melon_stem',{growth:7})
+  put(6,71,1,'pumpkin'); put(7,71,1,'pumpkin_stem',{growth:6})
+  put(9,71,1,'melon_block') // Decoration without a stem.
+  put(2,71,4,'sweet_berry_bush',{growth:3}); put(3,71,4,'sweet_berry_bush',{growth:2})
+  put(4,71,4,'sweet_berry_bush',{growth:7}) // Unused palette stage, not a mature vanilla bush.
+  put(5,71,4,'cocoa',{age:2,direction:3}); put(6,71,4,'cocoa',{age:1,direction:3})
+  put(1,195,1,'wheat',{growth:7})
+  const kinds = require('../dist/world.js').FARM_CROPS
+  const hits = await world.ripeCrops({x:.5,y:71,z:.5},24,undefined,kinds)
+  const at = (x,y,z) => hits.find(hit => hit.x===x && hit.y===y && hit.z===z)
+  assert.equal(at(1,71,1), undefined)
+  assert.ok(at(1,72,1)); assert.ok(at(1,73,1))
+  assert.ok(hits.indexOf(at(1,73,1)) < hits.indexOf(at(1,72,1)), 'Cane is harvested top first')
+  assert.ok(at(3,71,1)); assert.equal(at(6,71,1),undefined); assert.equal(at(9,71,1),undefined)
+  assert.ok(at(2,71,4)); assert.equal(at(3,71,4),undefined); assert.equal(at(4,71,4),undefined)
+  assert.deepEqual(world.cropAt(5,71,4), {kind:'cocoa',growth:2,direction:3})
+  assert.ok(at(5,71,4)); assert.equal(at(6,71,4),undefined)
+  assert.ok(at(1,195,1), 'Search has no height limit')
+  const onlyCocoa = await world.ripeCrops({x:.5,y:71,z:.5},24,undefined,['cocoa'])
+  assert.equal(onlyCocoa.length,1)
+  assert.equal(onlyCocoa[0].kind,'cocoa')
+  assert.equal((await world.ripeCrops({x:.5,y:71,z:.5},1,undefined,kinds)).length,0, 'Horizontal radius still applies')
+})

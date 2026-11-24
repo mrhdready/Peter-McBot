@@ -1,0 +1,33 @@
+const {test} = require('node:test')
+const assert = require('node:assert/strict')
+const {mkdtempSync, readFileSync, writeFileSync, rmSync, mkdirSync} = require('node:fs')
+const {tmpdir} = require('node:os')
+const path = require('node:path')
+const {FarmSettings, DEFAULT_FARM_GROUPS} = require('../dist/farm-settings.js')
+
+test('farm groups default to field only and persist across restarts without accepting invalid selections', t => {
+  const root = mkdtempSync(path.join(tmpdir(),'farm-settings-'))
+  t.after(() => rmSync(root,{recursive:true,force:true}))
+  const file = path.join(root,'settings.json')
+  const settings = new FarmSettings(file)
+  assert.deepEqual(settings.groups,DEFAULT_FARM_GROUPS)
+  const groups = {...DEFAULT_FARM_GROUPS, cocoa:true, blocks:true}
+  settings.update(groups)
+  assert.deepEqual(new FarmSettings(file).groups,groups)
+  for (const input of [null, [], {}, {...groups,cane:'yes'}, {...groups,unknown:true}]) assert.throws(() => settings.update(input), /boolean/)
+  assert.deepEqual(JSON.parse(readFileSync(file,'utf8')),groups)
+  assert.deepEqual(settings.groups,groups)
+  writeFileSync(file,'broken')
+  assert.throws(() => new FarmSettings(file))
+  assert.equal(readFileSync(file,'utf8'),'broken','Unreadable files are preserved')
+})
+
+test('failed persistence does not publish a new selection', t => {
+  const root = mkdtempSync(path.join(tmpdir(),'farm-settings-'))
+  t.after(() => rmSync(root,{recursive:true,force:true}))
+  const file = path.join(root,'settings.json')
+  const settings = new FarmSettings(file)
+  mkdirSync(file)
+  assert.throws(() => settings.update({...DEFAULT_FARM_GROUPS,cane:true}))
+  assert.deepEqual(settings.groups,DEFAULT_FARM_GROUPS)
+})

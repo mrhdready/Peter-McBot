@@ -587,15 +587,39 @@ function renderFarmAnchors () {
   }
 }
 let farmState = null;
+let farmSettingsPending = false;
 function renderFarm () {
   const farm = farmState;
   if (!farm) return;
   byId('farm-toggle').textContent = farm.enabled ? 'Farming beenden' : 'Farming starten';
   byId('farm-toggle').disabled = !farm.enabled && botStatus !== 'spawned';
   byId('farm-anchor').disabled = farm.enabled;
+  for (const group of ['field', 'blocks', 'cane', 'cocoa', 'berries']) {
+    const input = byId('farm-' + group);
+    input.disabled = farmSettingsPending;
+    if (!farmSettingsPending) input.checked = farm.groups?.[group] ?? (group === 'field');
+  }
   const until = farm.pausedUntil ? ' bis ' + new Date(farm.pausedUntil).toLocaleTimeString('de-DE', {hour:'2-digit', minute:'2-digit', second:'2-digit'}) : '';
   byId('farm-status').textContent = (farm.enabled ? farm.activity + until + ' – Anker: ' + farm.anchor.label + ', Radius ' + farm.radius + '.' : 'Farming ist aus.') +
     (farm.lastSummary ? ' Zuletzt: ' + farm.lastSummary : '');
+}
+for (const group of ['field', 'blocks', 'cane', 'cocoa', 'berries']) {
+  byId('farm-' + group).onchange = async event => {
+    const input = event.target;
+    if (farmSettingsPending) return;
+    farmSettingsPending = true;
+    renderFarm();
+    try {
+      const groups = {...(farmState?.groups || {field:true, blocks:false, cane:false, cocoa:false, berries:false}), [group]:input.checked};
+      const response = await fetch('/api/farm', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action:'settings', groups})});
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'HTTP ' + response.status);
+      farmState = result.farm;
+      byId('farm-feedback').textContent = 'Auswahl gespeichert. Begonnene Ernten werden abgeschlossen.';
+    } catch (error) { byId('farm-feedback').textContent = 'Speichern fehlgeschlagen: ' + error.message; }
+    farmSettingsPending = false;
+    renderFarm();
+  };
 }
 byId('farm-toggle').onclick = async () => {
   const on = !farmState?.enabled;
@@ -769,14 +793,14 @@ async function deletePoi (poi) {
   } catch (error) { byId('poi-feedback').textContent = 'Löschen fehlgeschlagen: ' + error.message; }
   void loadPlaces();
 }
-async function savePoi (x, z) {
+async function savePoi (x, z, y) {
   const name = byId('poi-name').value.trim();
   const dimension = dimensionNumber(lastDimension);
   if (!name) { byId('poi-feedback').textContent = 'Zuerst einen Namen eingeben.'; byId('poi-name').focus?.(); return; }
   if (dimension === null) { byId('poi-feedback').textContent = 'Dimension unbekannt; erst verbinden.'; return; }
   try {
     const response = await fetch('/api/pois', {method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({name, icon:byId('poi-icon').value, x, z, dimension})});
+      body:JSON.stringify({name, icon:byId('poi-icon').value, x, z, ...(y === undefined ? {} : {y}), dimension})});
     const result = await response.json();
     if (!response.ok) throw new Error(result.error);
     byId('poi-name').value = '';
@@ -790,11 +814,12 @@ byId('poi-save-target').onclick = () => {
   if (!byId('target-x').value.trim() || !byId('target-z').value.trim() || ![x,z].every(n => Number.isInteger(n) && Math.abs(n) <= 30000000)) {
     byId('poi-feedback').textContent = 'Zuerst ein gültiges Ziel wählen.'; return;
   }
-  return savePoi(x, z);
+  const y = preview?.target.x === x && preview?.target.z === z ? preview.path.at(-1)?.y : undefined;
+  return savePoi(x, z, y);
 };
 byId('poi-save-bot').onclick = () => {
   if (!botPosition) { byId('poi-feedback').textContent = 'Bot-Position unbekannt.'; return; }
-  return savePoi(Math.floor(botPosition.x), Math.floor(botPosition.z));
+  return savePoi(Math.floor(botPosition.x), Math.floor(botPosition.z), botPosition.y - 1.62);
 };
 function describeMapCell (x, z) {
   if (!currentMap) return;

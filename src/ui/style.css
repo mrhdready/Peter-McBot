@@ -148,3 +148,15 @@ details.panel[open] > summary { margin-bottom: .6rem; }
 [role="tab"][aria-selected="true"] { border-color: var(--accent); color: var(--accent); }
 .pin-item { font-size: 1.1rem; border-radius: 50%; }
 .pin-item.selected { background: rgb(17 24 39 / .8); box-shadow: 0 0 0 2px #fff; }
+.farm-groups { border: 0; padding: 0; margin: 1rem 0; min-width: 0; }
+.farm-groups legend { font-weight: 600; margin-bottom: .5rem; }
+.farm-switch { display: flex; align-items: center; gap: .75rem; padding: .45rem 0; cursor: pointer; position: relative; }
+.farm-switch > span:first-child { flex: 1; }
+.farm-switch small { display: block; font-size: .8rem; opacity: .75; }
+.farm-switch input { position: absolute; right: 0; width: 2.75rem; height: 1.5rem; opacity: 0; }
+.switch-track { width: 2.75rem; height: 1.5rem; border: 1px solid #789; border-radius: 1rem; background: #475569; flex-shrink: 0; transition: background .15s; }
+.switch-track::after { content: ''; display: block; width: 1.1rem; height: 1.1rem; margin: .13rem; border-radius: 50%; background: #fff; transition: transform .15s; }
+.farm-switch input:checked + .switch-track { background: #15803d; }
+.farm-switch input:checked + .switch-track::after { transform: translateX(1.25rem); }
+.farm-switch input:focus-visible + .switch-track { outline: 2px solid currentColor; outline-offset: 3px; }
+.farm-switch input:disabled + .switch-track { opacity: .5; }

@@ -143,7 +143,7 @@ export class BotController {
         this.cancelChest()
         // A new target replaces the running one; report that run as stopped first.
         if (this.runActive) { this.runActive = false; this.endRun(this.runOrigin, 'stopped', 'Neues Ziel gesetzt.') }
-        this.navigator.start({ x: command.x, z: command.z, ...(command.y !== undefined ? { y: command.y } : {}) }, this.now())
+        this.navigator.start({ x: command.x, z: command.z, ...(command.y !== undefined ? { y: command.y, ...(command.origin?.farm !== undefined ? { exactY: true } : {}) } : {}) }, this.now())
         this.runActive = true; this.runOrigin = command.origin ? { ...command.origin } : null
         this.settleNavigation()
       } else if (command === 'stop_navigation') {

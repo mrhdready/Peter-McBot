@@ -1,4 +1,5 @@
 import { createClient, type ClientOptions } from 'bedrock-protocol'
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { readConfig } from './config.js'
 import { BotController } from './bot.js'
@@ -28,6 +29,7 @@ const bot = new BotController(config, options => {
 }, () => web.broadcast())
 // Places share the map archive's server/world key.
 const mapServer = JSON.stringify([config.host.toLowerCase(), config.port, config.transport])
+bot.farm.loadSettings('./data/farms/' + createHash('sha256').update(JSON.stringify([mapServer, config.mapWorldId])).digest('hex') + '.json')
 const archive = new MapArchive('./data/maps', mapServer, config.mapWorldId)
 const places = new PlaceStore('./data/places', mapServer, config.mapWorldId)
 bot.state.onSurfaceTile = tile => archive.observe(tile)

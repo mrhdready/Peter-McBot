@@ -30,7 +30,7 @@ test('place store validates, persists per server/world and separates dimensions'
   assert.deepEqual((await store.list(1)).pois, [], 'Other dimensions stay separate')
   assert.deepEqual((await new PlaceStore(root, 'server-a', 'world-1').list(0)).pois, [saved], 'Places survive a restart')
   assert.deepEqual((await new PlaceStore(root, 'server-a', 'world-2').list(0)).pois, [], 'Another world key has its own places')
-  for (const input of [poi({ name: '' }), poi({ name: 'x'.repeat(41) }), poi({ icon: 'skull' }), poi({ x: 1.5 }), poi({ z: 30000001 }), poi({ dimension: 3 }), poi({ x: '1' })]) {
+  for (const input of [poi({ name: '' }), poi({ name: 'x'.repeat(41) }), poi({ icon: 'skull' }), poi({ x: 1.5 }), poi({ z: 30000001 }), poi({ dimension: 3 }), poi({ x: '1' }), poi({y:'71'}), poi({y:NaN}), poi({y:30000001})]) {
     await assert.rejects(store.add(input), error => error.status === 400, JSON.stringify(input))
   }
   assert.equal(store.revision, 1, 'Rejected input changes nothing')
@@ -212,7 +212,7 @@ test('map pins show an overlay on hover or first tap and select places as target
   assert.equal(byId('poi-name').value, '')
   byId('poi-name').value = 'Spawn'
   await byId('poi-save-bot').onclick()
-  assert.deepEqual(JSON.parse(requests.filter(r => r.url === '/api/pois').at(-1).options.body), { name: 'Spawn', icon: 'mine', x: 0, z: 0, dimension: 0 })
+  assert.deepEqual(JSON.parse(requests.filter(r => r.url === '/api/pois').at(-1).options.body), { name: 'Spawn', icon: 'mine', x: 0, z: 0, y: 68.38, dimension: 0 })
   await settle()
   const deleteButton = () => byId('poi-list').children[0].children[2]
   await deleteButton().onclick()
@@ -234,4 +234,16 @@ test('map pins show an overlay on hover or first tap and select places as target
   assert.equal(byId('target-x').value, ''); assert.equal(byId('target-z').value, '')
   assert.ok(!byId('map-pins').children.some(pin => pin.textContent === '📌'), 'The target pin disappears on arrival')
   assert.ok(byId('map-pins').children.some(pin => pin.textContent === '🤖'))
+})
+
+
+test('saved anchor heights persist while older X/Z-only places remain readable', async t => {
+  const root = temporaryRoot(t)
+  const store = new PlaceStore(root,'server','world')
+  const legacy = await store.add(poi())
+  const elevated = await store.add(poi({name:'Oben',y:75.9375}))
+  const loaded = await new PlaceStore(root,'server','world').list(0)
+  assert.deepEqual(loaded.pois,[legacy,elevated])
+  assert.equal(loaded.pois[0].y,undefined)
+  assert.equal(loaded.pois[1].y,75.9375)
 })

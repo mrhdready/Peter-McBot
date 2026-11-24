@@ -126,7 +126,7 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
         try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch { return reply(400, { error: 'Invalid JSON' }) }
         if (!body || typeof body !== 'object' || Array.isArray(body)) return reply(400, { error: 'Provide a JSON object' })
         const work: Promise<{ code: number; body: unknown }> = request.url === '/api/pois'
-          ? places.add({ name: body.name, icon: body.icon, x: body.x, z: body.z, dimension: body.dimension }).then(poi => ({ code: 201, body: { poi } }))
+          ? places.add({ name: body.name, icon: body.icon, x: body.x, z: body.z, y: body.y, dimension: body.dimension }).then(poi => ({ code: 201, body: { poi } }))
           : places.remove(body.id).then(() => ({ code: 200, body: { deleted: body.id } }))
         void work.then(result => { reply(result.code, result.body); broadcast() })
           .catch(error => reply(error instanceof WorldError ? error.status : 500, { error: error instanceof WorldError ? error.message : 'Places failed' }))
@@ -172,7 +172,7 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
       const collecting = request.url === '/api/collector'
       const job = collecting ? bot.collector : bot.farm
       const key = collecting ? 'collector' : 'farm'
-      const limit = collecting ? 256 : 128
+      const limit = 256
       if (Number(request.headers['content-length'] || 0) > limit) { request.resume(); return reply(413, { error: `Body exceeds ${limit} bytes` }) }
       const chunks: Buffer[] = []; let bytes = 0; let rejected = false
       request.on('data', (chunk: Buffer) => {
@@ -184,8 +184,12 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
         if (rejected) return
         let body: Record<string, unknown>
         try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch { return reply(400, { error: 'Invalid JSON' }) }
-        if (!body || typeof body !== 'object' || Array.isArray(body) || !['on', 'off'].includes(body.action as string) ||
-          (body.place !== undefined && body.place !== null && typeof body.place !== 'string')) return reply(400, { error: 'Provide action "on" or "off" and an optional place id' })
+        if (!body || typeof body !== 'object' || Array.isArray(body) || !(collecting ? ['on', 'off'] : ['on', 'off', 'settings']).includes(body.action as string) ||
+          (body.place !== undefined && body.place !== null && typeof body.place !== 'string')) return reply(400, { error: collecting ? 'Provide action "on" or "off" and an optional place id' : 'Provide action "on", "off" or "settings" and an optional place id' })
+        if (!collecting && body.action === 'settings') {
+          try { bot.farm.configure(body.groups); broadcast(); return reply(202, { farm: bot.farm.status() }) }
+          catch (error) { return reply(error instanceof WorldError ? error.status : 500, { error: error instanceof WorldError ? error.message : 'Farm settings could not be saved' }) }
+        }
         let filter: string | null = null
         if (collecting) {
           try { filter = itemFilter(body.item) } catch (error) { return reply(400, { error: error instanceof Error ? error.message : 'Invalid item' }) }
@@ -193,12 +197,12 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
         if (body.action === 'off') { job.off('Web-UI'); broadcast(); return reply(202, { [key]: job.status() }) }
         const p = bot.state.position
         if (bot.state.status !== 'spawned' || !p) return reply(409, { error: 'Bot must be spawned before ' + (collecting ? 'collecting' : 'farming') })
-        const start = (anchor: { x: number; z: number; label: string }) => {
+        const start = (anchor: { x: number; z: number; y?: number; label: string }) => {
           const error = collecting ? bot.collector.start(anchor, filter) : bot.farm.start(anchor, false)
           if (error) return reply(409, { error })
           broadcast(); reply(202, { [key]: job.status() })
         }
-        if (!body.place) return start({ x: p.x, z: p.z, label: 'Bot-Position' })
+        if (!body.place) return start({ x: p.x, z: p.z, ...(!collecting ? { y: p.y - 1.62 } : {}), label: 'Bot-Position' })
         const dimension = dimensionId(bot.state.dimension)
         if (!places || dimension === null) return reply(409, { error: 'Places are unavailable' })
         const session = bot.state.worldSession
@@ -206,7 +210,7 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
           if (session !== bot.state.worldSession || dimension !== dimensionId(bot.state.dimension)) return reply(409, { error: 'World changed; repeat start' })
           const poi = pois.find(entry => entry.id === body.place)
           if (!poi) return reply(404, { error: 'Place not found in this dimension' })
-          start({ x: poi.x + .5, z: poi.z + .5, label: poi.name })
+          start({ x: poi.x + .5, z: poi.z + .5, ...(!collecting && poi.y !== undefined ? { y: poi.y } : {}), label: poi.name })
         }).catch(error => reply(error instanceof WorldError ? error.status : 500, { error: error instanceof WorldError ? error.message : 'Places failed' }))
       })
       request.on('error', () => reply(400, { error: 'Incomplete request' }))

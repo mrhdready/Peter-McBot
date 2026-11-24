@@ -10,7 +10,7 @@ import { WorldError } from './world.js'
 
 export const POI_ICONS = ['home', 'mine', 'portal', 'farm', 'storage', 'star'] as const
 export type PoiIcon = typeof POI_ICONS[number]
-export type Poi = { id: string; name: string; x: number; z: number; dimension: number; icon: PoiIcon; createdAt: number }
+export type Poi = { id: string; name: string; x: number; z: number; y?: number; dimension: number; icon: PoiIcon; createdAt: number }
 export type HistoryEntry = { x: number; z: number; dimension: number; at: number }
 type Places = { pois: Poi[]; history: HistoryEntry[] }
 
@@ -26,7 +26,7 @@ const cleanName = (name: unknown) => typeof name === 'string' ? name.trim().repl
 function validPoi (poi: Poi) {
   return poi && typeof poi.id === 'string' && /^[0-9a-f-]{36}$/.test(poi.id) && typeof poi.name === 'string' &&
     poi.name.length >= 1 && poi.name.length <= POI_NAME_MAX && isCoordinate(poi.x) && isCoordinate(poi.z) &&
-    isDimension(poi.dimension) && POI_ICONS.includes(poi.icon) && Number.isFinite(poi.createdAt)
+    (poi.y === undefined || (Number.isFinite(poi.y) && Math.abs(poi.y) <= COORDINATE_MAX)) && isDimension(poi.dimension) && POI_ICONS.includes(poi.icon) && Number.isFinite(poi.createdAt)
 }
 function validEntry (entry: HistoryEntry) {
   return entry && isCoordinate(entry.x) && isCoordinate(entry.z) && isDimension(entry.dimension) && Number.isFinite(entry.at)
@@ -80,17 +80,18 @@ export class PlaceStore {
     })
   }
 
-  add (input: { name: unknown; icon: unknown; x: unknown; z: unknown; dimension: unknown }) {
+  add (input: { name: unknown; icon: unknown; x: unknown; z: unknown; y?: unknown; dimension: unknown }) {
     const name = cleanName(input.name)
-    const { x, z, dimension, icon } = input
+    const { x, z, y, dimension, icon } = input
     if (!name || name.length > POI_NAME_MAX) return Promise.reject(new WorldError(`Name must have 1 to ${POI_NAME_MAX} characters`))
     if (!POI_ICONS.includes(icon as PoiIcon)) return Promise.reject(new WorldError('Unknown icon'))
     if (!isCoordinate(x) || !isCoordinate(z)) return Promise.reject(new WorldError(`Provide integer x and z (-${COORDINATE_MAX}..${COORDINATE_MAX})`))
+    if (y !== undefined && (typeof y !== 'number' || !Number.isFinite(y) || Math.abs(y) > COORDINATE_MAX)) return Promise.reject(new WorldError('Invalid place height'))
     if (!isDimension(dimension)) return Promise.reject(new WorldError('Invalid dimension'))
     return this.exclusive(async () => {
       const data = await this.load()
       if (data.pois.filter(poi => poi.dimension === dimension).length >= POI_MAX) throw new WorldError(`At most ${POI_MAX} places per dimension`, 409)
-      const poi: Poi = { id: randomUUID(), name, x, z, dimension, icon: icon as PoiIcon, createdAt: this.now() }
+      const poi: Poi = { id: randomUUID(), name, x, z, ...(y === undefined ? {} : { y: y as number }), dimension, icon: icon as PoiIcon, createdAt: this.now() }
       await this.commit({ ...data, pois: [...data.pois, poi] })
       return poi
     })

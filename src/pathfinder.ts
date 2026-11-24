@@ -12,7 +12,7 @@ export const COST_EDGE = 2
 export const COST_DOOR = 3
 export const MAX_SEARCH_NODES = 16384
 const NEIGHBOURS = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const
-export type Target = { x: number; z: number; y?: number }
+export type Target = { x: number; z: number; y?: number; exactY?: boolean }
 export type PreviewRoute = { target: Target; origin: Position; path: Feet[]; session: number; revision: number }
 type Node = Feet & { g: number; f: number }
 const key = (p: Feet) => p.x + ':' + p.y + ':' + p.z
@@ -74,7 +74,7 @@ export class RoutePlanner {
       if (this.closed.has(id)) continue
       this.closed.add(id)
       if (this.closed.size > MAX_SEARCH_NODES) throw new Error(`Suchlimit erreicht (${MAX_SEARCH_NODES} Wegpunkte).`)
-      if (node.x === target.x && node.z === target.z && (target.y === undefined || Math.abs(node.y - target.y) <= 1)) {
+      if (node.x === target.x && node.z === target.z && (target.y === undefined || Math.abs(node.y - target.y) <= (target.exactY ? .08 : 1))) {
         let cursor: Feet = node
         const path: Feet[] = [{ x: cursor.x + .5, y: cursor.y, z: cursor.z + .5 }]
         while (this.parents.has(key(cursor))) {

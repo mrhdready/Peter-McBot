@@ -84,8 +84,14 @@ test('POST /api/farm validates the request, switches farming and the snapshot ca
   assert.equal((await post('{"action":"maybe"}')).status, 400)
   assert.equal((await post('{"action":"on","place":5}')).status, 400)
   assert.equal((await post('[]')).status, 400)
-  assert.equal((await post(JSON.stringify({ action: 'on', place: 'x'.repeat(200) }))).status, 413)
+  assert.equal((await post(JSON.stringify({ action: 'on', place: 'x'.repeat(300) }))).status, 413)
   assert.equal((await post('{"action":"on"}')).status, 409, 'Farming needs a spawned bot')
+  assert.equal((await post(JSON.stringify({action:'settings', groups:{field:true}}))).status,400)
+  const groups = {field:true,blocks:true,cane:false,cocoa:true,berries:false}
+  const settings = await post(JSON.stringify({action:'settings',groups}))
+  assert.equal(settings.status,202,'Selection can be saved while disconnected')
+  assert.deepEqual((await settings.json()).farm.groups,groups)
+
   bot.enqueue('connect'); bot.step()
   client.emit('start_game', { player_position: { x: .5, y: 72.62, z: .5 }, dimension: 0 })
   client.emit('spawn')
@@ -94,7 +100,7 @@ test('POST /api/farm validates the request, switches farming and the snapshot ca
   const on = await post('{"action":"on","place":null}')
   assert.equal(on.status, 202)
   assert.equal((await on.json()).farm.enabled, true)
-  assert.deepEqual(bot.farm.status().anchor, { x: .5, z: .5, label: 'Bot-Position' })
+  assert.deepEqual(bot.farm.status().anchor, { x: .5, z: .5, y: 71, label: 'Bot-Position' })
   assert.equal((await fetch(base + '/api/status').then(r => r.json())).status, 'spawned')
   const abort = new AbortController()
   t.after(() => abort.abort())
@@ -103,6 +109,7 @@ test('POST /api/farm validates the request, switches farming and the snapshot ca
   await reader.cancel()
   assert.equal(snapshot.farm.enabled, true)
   assert.equal(snapshot.farm.radius, 24)
+  assert.deepEqual(snapshot.farm.groups, groups)
   const off = await post('{"action":"off"}')
   assert.equal(off.status, 202)
   assert.equal((await off.json()).farm.enabled, false)
@@ -213,6 +220,7 @@ test('map markers select underground hits, survive map refresh and discard obsol
         return {ok:true,json:async()=>({target,origin:{...state.position},session:state.coverage.session,revision:state.worldRevision??0,
           path:[{x:state.position.x,y:68,z:state.position.z},{x:target.x+.5,y:68,z:target.z+.5}]})}
       }
+      if (url === '/api/farm' && JSON.parse(options.body).action === 'settings') return {ok:true,json:async()=>({farm:{...state.farm,groups:JSON.parse(options.body).groups}})}
       const body = url === '/api/map' ? map : url === '/api/chat' ? chat : url === '/api/inventory' ? inventory : url === '/api/block-ids' ? { blockIds: ['minecraft:diamond_ore'] } : result
       return { ok: true, json: async () => body }
     }
@@ -292,6 +300,16 @@ test('map markers select underground hits, survive map refresh and discard obsol
   assert.equal(byId('farm-toggle').textContent, 'Farming beenden')
   assert.equal(byId('farm-status').textContent, 'Erntet – Anker: Bot-Position, Radius 24. Zuletzt: 2 Weizen geerntet, 2 neu gepflanzt.')
   assert.equal(byId('farm-anchor').disabled, true)
+  assert.equal(byId('farm-field').checked,true)
+  assert.equal(byId('farm-blocks').checked,false)
+  state.farm.groups = {field:true,blocks:true,cane:false,cocoa:false,berries:false}
+  await publish()
+  assert.equal(byId('farm-blocks').checked,true,'SSE synchronizes shared group settings')
+  byId('farm-cocoa').checked = true
+  await byId('farm-cocoa').onchange({target:byId('farm-cocoa')})
+  assert.deepEqual(JSON.parse(requests.at(-1).options.body),{action:'settings',groups:{...state.farm.groups,cocoa:true}})
+  await publish()
+
   await byId('farm-toggle').onclick()
   assert.equal(requests.at(-1).url, '/api/farm')
   assert.deepEqual(JSON.parse(requests.at(-1).options.body), { action: 'off' })

@@ -15,23 +15,26 @@
 import type { ChestPlanner, ChestResult, Command } from './bot.js'
 import type { Position, WorldState } from './state.js'
 import type { Navigator } from './navigation.js'
-import { CROP_KINDS, RIPE_GROWTH, WorldError, type CropKind } from './world.js'
+import { FARM_CROPS, WorldError, type CropKind } from './world.js'
 import { CHEST_CONTAINER, nextTransfer, playerContainer, shortName, type Inventory, type Slot, type StackResponse, type TransferStep } from './inventory.js'
 import { CHEST_IDS, chestStandSpot } from './chat-commands.js'
+
+import { FarmSettings, CROP_GROUP } from './farm-settings.js'
+import { EYE_HEIGHT } from './pathfinder.js'
 
 import { dropColumn, nearestDrop, PICKUP_MS } from './item-collection.js'
 
 type Send = (name: string, params: unknown) => void
-type Spot = Position & { kind: CropKind }
+type Spot = Position & { kind: CropKind; direction?: number }
 type Stand = { x: number; z: number; feetY: number }
 
 /** Crop → the item that plants it. */
-export const CROPS: Record<CropKind, string> = { wheat: 'wheat_seeds', carrots: 'carrot', potatoes: 'potato', beetroot: 'beetroot_seeds' }
+export const CROPS: Partial<Record<CropKind, string>> = { wheat: 'wheat_seeds', carrots: 'carrot', potatoes: 'potato', beetroot: 'beetroot_seeds', cocoa: 'cocoa_beans' }
 /** Seeds and fruits the bot keeps for replanting; everything above goes into a chest. */
-export const RESERVE: Record<string, number> = { wheat_seeds: 64, carrot: 16, potato: 16, beetroot_seeds: 64 }
+export const RESERVE: Record<string, number> = { wheat_seeds: 64, carrot: 16, potato: 16, beetroot_seeds: 64, cocoa_beans: 64 }
 /** Harvest items that are stored: wheat, beetroot and poisonous potatoes always, the others above their reserve. */
-export const DEPOSIT = ['wheat', 'poisonous_potato', 'wheat_seeds', 'carrot', 'potato', 'beetroot', 'beetroot_seeds']
-const CROP_LABELS: Record<CropKind, string> = { wheat: 'Weizen', carrots: 'Karotten', potatoes: 'Kartoffeln', beetroot: 'Rote Bete' }
+export const DEPOSIT = ['wheat', 'poisonous_potato', 'wheat_seeds', 'carrot', 'potato', 'beetroot', 'beetroot_seeds', 'sugar_cane', 'melon_slice', 'melon_block', 'pumpkin', 'cocoa_beans', 'sweet_berries']
+const CROP_LABELS: Record<CropKind, string> = { wheat: 'Weizen', carrots: 'Karotten', potatoes: 'Kartoffeln', beetroot: 'Rote Bete', melon_block: 'Melonen', pumpkin: 'Kürbisse', reeds: 'Zuckerrohr', cocoa: 'Kakao', sweet_berry_bush: 'Süßbeeren' }
 export const FARM_RADIUS = 24
 const SCAN_MS = 30000
 export const PAUSE_MS = 60000
@@ -68,10 +71,10 @@ export interface FarmHost {
   publish (): void
 }
 
-export type FarmAnchor = { x: number; z: number; label: string }
+export type FarmAnchor = { x: number; z: number; y?: number; label: string }
 export type FarmStatus = {
   enabled: boolean; once: boolean; anchor: FarmAnchor | null; radius: number; activity: string
-  pausedUntil: number | null; lastSummary: string | null
+  pausedUntil: number | null; lastSummary: string | null; groups: import('./farm-settings.js').FarmGroups
 }
 type Wait = { done: () => boolean; until: number; each?: (send: Send) => void; resolve: (ok: boolean) => void; reject: (error: Error) => void }
 type Tally = { harvested: Record<CropKind, number>; planted: number; unplanted: number }
@@ -99,7 +102,20 @@ export class Farmer {
   private reported = new Set<string>()
   private equipped: { slot: number; stackId: number } | null = null
 
+  private settings = new FarmSettings()
+  private returnBlocked = false
+
   constructor (private host: FarmHost) {}
+
+  loadSettings (file: string) { this.settings = new FarmSettings(file) }
+
+  configure (groups: unknown) {
+    this.settings.update(groups)
+    this.host.publish()
+  }
+
+  private selected (kind: CropKind) { return this.settings.groups[CROP_GROUP[kind]] }
+
 
   get radius () { return Math.max(0, Math.min(FARM_RADIUS, this.host.reach - 16)) }
 
@@ -112,7 +128,8 @@ export class Farmer {
     if (distance > this.host.reach) return `${anchor.label} ist zu weit weg (${distance} Blöcke).`
     this.cancel()
     this.host.activate?.()
-    this.enabled = true; this.once = once; this.anchor = { ...anchor }
+    this.enabled = true; this.once = once; this.anchor = { ...anchor, ...(anchor.y === undefined && Math.floor(anchor.x) === Math.floor(p.x) && Math.floor(anchor.z) === Math.floor(p.z) ? { y: p.y - EYE_HEIGHT } : {}) }
+    this.returnBlocked = false
     this.pausedUntil = 0; this.nextScanAt = 0; this.lastSummary = null
     this.unplanted = []; this.reported.clear()
     this.setActivity('Startet')
@@ -165,7 +182,7 @@ export class Farmer {
     else if (paused) activity = 'Pausiert (Chat-Befehl)'
     else if (this.host.state.status !== 'spawned') activity = 'Wartet auf Verbindung'
     return { enabled: this.enabled, once: this.once, anchor: this.anchor && { ...this.anchor }, radius: this.radius, activity,
-      pausedUntil: paused ? this.pausedUntil : null, lastSummary: this.lastSummary }
+      pausedUntil: paused ? this.pausedUntil : null, lastSummary: this.lastSummary, groups: { ...this.settings.groups } }
   }
 
   /** One tick while the bot is spawned: starts a round when due and advances the running wait. */
@@ -186,8 +203,8 @@ export class Farmer {
         if (this.token !== token) return
         this.running = false
         this.nextScanAt = this.host.now() + SCAN_MS
-        if (this.once && this.enabled) this.off('ein Durchgang erledigt')
-        else if (this.enabled) this.setActivity('Wartet auf reife Pflanzen')
+        if (this.once && this.enabled && !this.returnBlocked) this.off('ein Durchgang erledigt')
+        else if (this.enabled) this.setActivity(this.returnBlocked ? 'Anker nicht erreichbar; wartet' : 'Wartet auf reife Pflanzen')
       })
     }
     const wait = this.wait
@@ -242,40 +259,57 @@ export class Farmer {
     return box.value as T
   }
 
-  private async walk (x: number, z: number, label: string): Promise<string> {
+  private async walk (x: number, z: number, label: string, y?: number): Promise<string> {
     const token = ++this.navToken
     this.navEnd = null
-    if (!this.host.enqueue({ type: 'navigate', x, z, origin: { player: '', label, farm: token } })) return 'busy'
+    if (!this.host.enqueue({ type: 'navigate', x, z, ...(y === undefined ? {} : { y }), origin: { player: '', label, farm: token } })) return 'busy'
     await this.ticks(130000, () => this.navEnd !== null)
+    if (this.navEnd === null) this.host.stopNavigation()
     return this.navEnd ?? 'timeout'
   }
 
   // ---- one round ----
 
+  private async returnToAnchor () {
+    const anchor = this.anchor!
+    const p = this.host.state.position!
+    if (Math.floor(p.x) === Math.floor(anchor.x) && Math.floor(p.z) === Math.floor(anchor.z) &&
+      Math.abs(p.y - EYE_HEIGHT - anchor.y!) < .15) { this.returnBlocked = false; return true }
+    this.setActivity('Kehrt zum Anker zurück')
+    this.returnBlocked = (await this.walk(Math.floor(anchor.x), Math.floor(anchor.z), 'Farm-Anker', anchor.y)) !== 'arrived'
+    if (!this.returnBlocked && anchor.y === undefined) anchor.y = this.host.state.position!.y - EYE_HEIGHT
+    if (this.returnBlocked) this.problem('anchor', `Ich komme nicht zum Farm-Anker ${anchor.label}.`)
+    else this.reported.delete('anchor')
+    return !this.returnBlocked
+  }
+
   private async round () {
     const anchor = this.anchor!
     const state = this.host.state
     const here = () => state.position!
-    if (Math.hypot(here().x - anchor.x, here().z - anchor.z) > this.radius) {
-      this.setActivity('Läuft zum Anker')
-      const status = await this.walk(Math.floor(anchor.x), Math.floor(anchor.z), 'Farm-Anker')
-      if (status !== 'arrived') return this.problem('anchor', `Ich komme nicht zum Farm-Anker ${anchor.label}.`)
+    if (anchor.y === undefined || this.returnBlocked || Math.hypot(here().x - anchor.x, here().z - anchor.z) > this.radius) {
+      if (!(await this.returnToAnchor())) return
     }
     this.reported.delete('anchor')
-    const tally: Tally = { harvested: { wheat: 0, carrots: 0, potatoes: 0, beetroot: 0 }, planted: 0, unplanted: 0 }
+    const tally: Tally = { harvested: Object.fromEntries(FARM_CROPS.map(kind => [kind, 0])) as Record<CropKind, number>, planted: 0, unplanted: 0 }
     // Spots left without seed earlier come first, as long as a seed is there now.
     if (this.unplanted.length) {
       const waiting = this.unplanted.splice(0)
-      await this.plantAll(waiting, tally)
+      this.unplanted.push(...waiting.filter(spot => !this.selected(spot.kind)))
+      await this.plantAll(waiting.filter(spot => this.selected(spot.kind)), tally)
     }
     if (!this.hasFreeSlot()) {
       await this.deposit()
-      if (!this.hasFreeSlot()) { this.setActivity('Pausiert (Inventar voll)'); return this.problem('full', 'Mein Inventar ist voll; ich ernte erst weiter, wenn Platz ist.') }
+      if (!this.hasFreeSlot()) {
+        this.problem('full', 'Mein Inventar ist voll; ich ernte erst weiter, wenn Platz ist.')
+        await this.returnToAnchor()
+        return
+      }
     }
     this.reported.delete('full')
     this.setActivity('Sucht reife Pflanzen')
     const centre = { x: anchor.x, y: here().y, z: anchor.z }
-    const crops = await this.external(state.ripeCrops(centre, this.radius)).catch((error: unknown) => {
+    const crops = await this.external(state.ripeCrops(centre, this.radius, undefined, FARM_CROPS.filter(kind => this.selected(kind)))).catch((error: unknown) => {
       if (error instanceof WorldError) { log('Suche nicht möglich: ' + error.message); return [] }
       throw error
     })
@@ -288,16 +322,17 @@ export class Farmer {
       if (!choice.stand) { log(`Kein Standplatz für (${choice.members[0].x}, ${choice.members[0].y}, ${choice.members[0].z}).`); continue }
       await this.cluster(choice.stand, choice.members, tally)
     }
-    const harvested = CROP_KINDS.reduce((sum, kind) => sum + tally.harvested[kind], 0)
+    const harvested = FARM_CROPS.reduce((sum, kind) => sum + tally.harvested[kind], 0)
     if (this.unplanted.length) await this.fetchSeeds(tally)
     if (this.surplus() > DEPOSIT_THRESHOLD || !this.hasFreeSlot()) await this.deposit()
     if (harvested) {
-      const parts = CROP_KINDS.filter(kind => tally.harvested[kind]).map(kind => `${tally.harvested[kind]} ${CROP_LABELS[kind]}`)
+      const parts = FARM_CROPS.filter(kind => tally.harvested[kind]).map(kind => `${tally.harvested[kind]} ${CROP_LABELS[kind]}`)
       const summary = `${parts.join(', ')} geerntet, ${tally.planted} neu gepflanzt` + (this.unplanted.length ? `, ${this.unplanted.length} Stelle(n) ohne Saatgut` : '') + '.'
       this.lastSummary = summary
       log('Runde: ' + summary)
       this.onReport(summary)
     } else if (tally.planted) log(`Runde: ${tally.planted} Stelle(n) nachgepflanzt.`)
+    await this.returnToAnchor()
   }
 
   // Harvests one cluster from one standing place, collects the drops and replants.
@@ -305,23 +340,67 @@ export class Farmer {
     if (!(await this.goTo(stand, 'Feld'))) return
     this.setActivity('Erntet')
     const harvested: Spot[] = []
-    for (const crop of crops) {
+    for (const crop of [...crops].sort((a, b) => b.y - a.y)) {
+      if (!this.selected(crop.kind)) continue
       const current = this.host.state.cropAt(crop.x, crop.y, crop.z)
-      if (current?.kind !== crop.kind || current.growth !== RIPE_GROWTH) continue
-      const centre = { x: crop.x + .5, y: crop.y + .25, z: crop.z + .5 }
+      if (current?.kind !== crop.kind || !this.host.state.harvestable(crop.x, crop.y, crop.z, current)) continue
+      if (crop.kind === 'cocoa') crop.direction = current.direction
+      const centre = { x: crop.x + .5, y: crop.y + .5, z: crop.z + .5 }
       if (this.eyeDistance(centre) > REACH) { log(`(${crop.x}, ${crop.y}, ${crop.z}) außer Reichweite.`); continue }
-      const action = (name: string) => ({ action: name, position: { x: crop.x, y: crop.y, z: crop.z }, face: 1 })
-      await this.act(send => this.host.navigator.lookAt(send, centre, { flags: ['block_action'], fields: { block_action: [action('start_break'), action('predict_break')] } }))
-      await this.act(send => this.host.navigator.lookAt(send, centre, { flags: ['block_action'], fields: { block_action: [action('stop_break')] } }))
-      const ripe = () => { const now = this.host.state.cropAt(crop.x, crop.y, crop.z); return now?.kind === crop.kind && now.growth === RIPE_GROWTH }
-      if (!(await this.ticks(BREAK_MS, () => !ripe(), send => this.host.navigator.lookAt(send, centre)))) { log(`(${crop.x}, ${crop.y}, ${crop.z}) nicht geerntet.`); continue }
+      if (!(await this.harvest(crop, centre))) continue
       harvested.push(crop)
       tally.harvested[crop.kind]++
+      if (crop.kind === 'cocoa') {
+        await this.collect(stand, crop)
+        await this.plantAll([crop], tally)
+        harvested.pop()
+      }
     }
     if (!harvested.length) return
     log(`${harvested.length} Pflanze(n) bei (${stand.x}, ${stand.z}) geerntet.`)
     await this.collect(stand, harvested[0])
-    await this.plantAll(harvested, tally)
+    await this.plantAll(harvested.filter(spot => CROPS[spot.kind]), tally)
+  }
+
+  private async harvest (crop: Spot, centre: Position) {
+    const state = this.host.state
+    if (crop.kind === 'sweet_berry_bush') {
+      const runtime = state.blockRuntimeIdAt(crop.x, crop.y, crop.z)
+      if (runtime === null) return false
+      // Empty hand avoids fertilising with bone meal or using another held item on the bush.
+      const slot = await this.holdEmpty(centre)
+      if (slot === null) return false
+      await this.act(send => {
+        this.host.navigator.clickBlock(send, crop, runtime, state.inventory.packetItem(slot), { hotbarSlot: slot })
+        this.host.navigator.lookAt(send, centre)
+      })
+    } else {
+      const action = (name: string) => ({ action: name, position: { x: crop.x, y: crop.y, z: crop.z }, face: 1 })
+      const duration = crop.kind === 'melon_block' || crop.kind === 'pumpkin' ? 1600 : crop.kind === 'cocoa' ? 350 : 0
+      if (duration) {
+        if (await this.holdEmpty(centre) === null) return false
+        await this.act(send => this.host.navigator.lookAt(send, centre, { flags: ['block_action'], fields: { block_action: [action('start_break')] } }))
+        await this.ticks(duration, () => state.cropAt(crop.x, crop.y, crop.z)?.kind !== crop.kind,
+          send => this.host.navigator.lookAt(send, centre, { flags: ['block_action'], fields: { block_action: [action('continue_break')] } }))
+        await this.act(send => this.host.navigator.lookAt(send, centre, { flags: ['block_action'], fields: { block_action: [action('predict_break')] } }))
+      } else {
+        await this.act(send => this.host.navigator.lookAt(send, centre, { flags: ['block_action'], fields: { block_action: [action('start_break'), action('predict_break')] } }))
+      }
+      await this.act(send => this.host.navigator.lookAt(send, centre, { flags: ['block_action'], fields: { block_action: [action('stop_break')] } }))
+    }
+    return this.ticks(BREAK_MS, () => {
+      const now = state.cropAt(crop.x, crop.y, crop.z)
+      return crop.kind === 'sweet_berry_bush' ? now?.kind === crop.kind && now.growth < 3 : now?.kind !== crop.kind
+    }, send => this.host.navigator.lookAt(send, centre))
+  }
+
+  private async holdEmpty (look: Position): Promise<number | null> {
+    const slot = this.host.state.inventory.slotList().findIndex((item, index) => index < 9 && item === null)
+    if (slot < 0) { this.problem('emptyhand', 'Ein freier Hotbar-Slot wird zum Ernten benötigt.'); return null }
+    await this.act(send => send('mob_equipment', { runtime_entity_id: this.host.entityId(), item: this.host.state.inventory.packetItem(slot), slot, selected_slot: slot, window_id: 'inventory' }))
+    this.equipped = null
+    await this.ticks(150, () => false, send => this.host.navigator.lookAt(send, look))
+    return slot
   }
 
   // Walks onto the columns of drops around the standing place until they are picked up (at most PICKUP_WALKS walks).
@@ -358,23 +437,37 @@ export class Farmer {
         if (!this.plantable(spot)) continue
         const result = await this.plant(spot)
         if (result === 'planted') tally.planted++
-        else if (result === 'no_seed') { this.unplanted.push(spot); tally.unplanted++ }
+        else { this.unplanted.push(spot); tally.unplanted++ }
       }
     }
   }
 
   private plantable (spot: Spot) {
     const state = this.host.state
-    return state.blockNameAt(spot.x, spot.y, spot.z) === 'minecraft:air' && state.blockNameAt(spot.x, spot.y - 1, spot.z) === 'minecraft:farmland'
+    return state.blockNameAt(spot.x, spot.y, spot.z) === 'minecraft:air' &&
+      (spot.kind === 'cocoa' ? this.cocoaSupport(spot) !== null : !!CROPS[spot.kind] && state.blockNameAt(spot.x, spot.y - 1, spot.z) === 'minecraft:farmland')
+  }
+
+  private cocoaSupport (spot: Spot) {
+    // Bedrock direction points into the support: south, west, north, east.
+    const offset = [[0, 1, 2], [-1, 0, 5], [0, -1, 3], [1, 0, 4]][spot.direction ?? -1]
+    if (!offset) return null
+    const [dx, dz, face] = offset
+    const position = { x: spot.x + dx, y: spot.y, z: spot.z + dz }
+    const name = this.host.state.blockNameAt(position.x, position.y, position.z)
+    if (!name || !/^minecraft:(?:stripped_)?jungle_(?:log|wood)$/.test(name)) return null
+    return { position, face, clickPos: { x: face === 4 ? 0 : face === 5 ? 1 : .5, y: .5, z: face === 2 ? 0 : face === 3 ? 1 : .5 } }
   }
 
   private async plant (spot: Spot): Promise<'planted' | 'failed' | 'no_seed'> {
     const state = this.host.state
-    const seed = CROPS[spot.kind]
-    const soilTop = { x: spot.x + .5, y: spot.y - .0625, z: spot.z + .5 }
+    const seed = CROPS[spot.kind]!
+    const support = spot.kind === 'cocoa' ? this.cocoaSupport(spot) : null
+    if (spot.kind === 'cocoa' && !support) return 'failed'
+    const soilTop = support ? { x: spot.x + .5, y: spot.y + .5, z: spot.z + .5 } : { x: spot.x + .5, y: spot.y - .0625, z: spot.z + .5 }
     const slot = await this.holdSeed(seed, soilTop)
     if (slot === null) return 'no_seed'
-    const soil = { x: spot.x, y: spot.y - 1, z: spot.z }
+    const soil = support?.position ?? { x: spot.x, y: spot.y - 1, z: spot.z }
     const soilRuntime = state.blockRuntimeIdAt(soil.x, soil.y, soil.z)
     if (soilRuntime === null) return 'failed'
     // Ends the break state left from harvesting; without it the server destroys the new crop in the same tick (verified live).
@@ -383,7 +476,7 @@ export class Farmer {
     await this.ticks(150, () => false, send => this.host.navigator.lookAt(send, soilTop))
     const held = state.inventory.packetItem(slot)
     await this.act(send => {
-      this.host.navigator.clickBlock(send, soil, soilRuntime, held, { face: 1, clickPos: { x: .5, y: 1, z: .5 }, hotbarSlot: slot })
+      this.host.navigator.clickBlock(send, soil, soilRuntime, held, { face: support?.face ?? 1, clickPos: support?.clickPos ?? { x: .5, y: 1, z: .5 }, hotbarSlot: slot })
       // The server handles the click only together with an input packet.
       this.host.navigator.lookAt(send, soilTop)
     })
@@ -462,7 +555,11 @@ export class Farmer {
   // Fetches seeds for spots left without one, once per round, and plants them.
   private async fetchSeeds (tally: Tally) {
     const needed = new Map<string, number>()
-    for (const spot of this.unplanted) needed.set(CROPS[spot.kind], (needed.get(CROPS[spot.kind]) ?? 0) + 1)
+    for (const spot of this.unplanted) {
+      const seed = CROPS[spot.kind]
+      if (seed && this.selected(spot.kind)) needed.set(seed, (needed.get(seed) ?? 0) + 1)
+    }
+    if (!needed.size) return
     this.setActivity('Holt Saatgut')
     const planner: ChestPlanner = (inventory: Inventory, window, moved) => {
       const own = inventory.slotList()
@@ -478,8 +575,9 @@ export class Farmer {
     const result = await this.visitChests(planner, true)
     log(`Saatgut aus Kiste: ${result ?? 'keine Kiste'}.`)
     const waiting = this.unplanted.splice(0)
+    this.unplanted.push(...waiting.filter(spot => !this.selected(spot.kind)))
     tally.unplanted -= waiting.length
-    await this.plantAll(waiting, tally)
+    await this.plantAll(waiting.filter(spot => this.selected(spot.kind)), tally)
     for (const [seed] of needed) {
       if (this.unplanted.some(spot => CROPS[spot.kind] === seed)) this.problem('seed:' + seed, `Kein ${seed} zum Nachpflanzen; die Stellen bleiben leer.`)
     }
@@ -518,14 +616,20 @@ export class Farmer {
 
   // The column to stand on for the target nearest to the bot: within the 3×3 around it, the one that reaches the most targets
   // (Chebyshev distance ≤ 1), then the nearer one. Without a standable column the target alone is returned with stand null.
-  private standFor<T extends Position> (targets: T[]): { stand: Stand | null; members: T[] } {
+  private standFor<T extends Position & { kind?: CropKind; direction?: number }> (targets: T[]): { stand: Stand | null; members: T[] } {
     const p = this.host.state.position!
     const first = targets.reduce((best, target) => Math.hypot(target.x + .5 - p.x, target.z + .5 - p.z) < Math.hypot(best.x + .5 - p.x, best.z + .5 - p.z) ? target : best)
     let best: { stand: Stand; members: T[]; distance: number } | null = null
     for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
       const x = first.x + dx; const z = first.z + dz
+      const support = first.kind === 'cocoa' ? [[0, 1], [-1, 0], [0, -1], [1, 0]][first.direction ?? -1] : null
+      if (support && dx * support[0] + dz * support[1] > 0) continue
       // Farmland top, level ground, a slab, one block up or down.
-      const feetY = [first.y - .0625, first.y, first.y - .5, first.y + 1, first.y - 1].find(y => this.host.state.canStandAt(x + .5, z + .5, y))
+      // Include ground below tall cane and cocoa, including farmland and half slabs; prefer the bot's current floor.
+      const heights = Array.from({ length: 7 }, (_, i) => first.y + 1 - i).flatMap(y => [y, y - .0625, y - .5])
+      heights.sort((a, b) => Math.abs(a - (p.y - EYE_HEIGHT)) - Math.abs(b - (p.y - EYE_HEIGHT)))
+      const feetY = heights.find(y => this.host.state.canStandAt(x + .5, z + .5, y) &&
+        Math.hypot(first.x - x, first.y + .5 - y - EYE_HEIGHT, first.z - z) <= REACH)
       if (feetY === undefined) continue
       const eye = { x: x + .5, y: feetY + 1.62, z: z + .5 }
       const members = targets.filter(target => Math.max(Math.abs(target.x - x), Math.abs(target.z - z)) <= 1 &&
@@ -539,9 +643,9 @@ export class Farmer {
 
   private async goTo (stand: Stand, label: string) {
     const p = this.host.state.position!
-    if (Math.floor(p.x) === stand.x && Math.floor(p.z) === stand.z) return true
+    if (Math.floor(p.x) === stand.x && Math.floor(p.z) === stand.z && Math.abs(p.y - EYE_HEIGHT - stand.feetY) < .15) return true
     this.setActivity('Läuft zum Feld')
-    const status = await this.walk(stand.x, stand.z, label)
+    const status = await this.walk(stand.x, stand.z, label, stand.feetY)
     if (status !== 'arrived') log(`Standplatz (${stand.x}, ${stand.z}) nicht erreicht: ${status}.`)
     return status === 'arrived'
   }

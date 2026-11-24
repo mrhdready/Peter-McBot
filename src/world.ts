@@ -25,7 +25,9 @@ export class WorldError extends Error {
 
 /** Crops the farming mode harvests; each has only the `growth` state (0..7, ripe at 7) in minecraft-data 1.26.60. */
 export const CROP_KINDS = ['wheat', 'carrots', 'potatoes', 'beetroot'] as const
-export type CropKind = typeof CROP_KINDS[number]
+export const FARM_CROPS = [...CROP_KINDS, 'melon_block', 'pumpkin', 'reeds', 'cocoa', 'sweet_berry_bush'] as const
+export type CropKind = typeof FARM_CROPS[number]
+export type Crop = { kind: CropKind; growth: number; direction?: number }
 export const RIPE_GROWTH = 7
 
 export function dimensionId (dimension: number | string | null): number | null {
@@ -52,6 +54,8 @@ export class ChunkWorld {
   private doorToggle = new Int32Array()
   private doorOpen = new Uint8Array()
   private doorHalf = new Uint8Array()
+  private cropGrowth = new Int8Array()
+  private cropDirection = new Int8Array()
   private runtimeIds = new Map<number, number>()
   readonly terrain = new Terrain((x, y, z) => this.collisionAt(x, y, z))
   // When true, routes may pass closed hand-openable doors and fence gates; navigation opens them on the way.
@@ -90,6 +94,8 @@ export class ChunkWorld {
     this.doorToggle = new Int32Array()
     this.doorOpen = new Uint8Array()
     this.doorHalf = new Uint8Array()
+    this.cropGrowth = new Int8Array()
+    this.cropDirection = new Int8Array()
     this.runtimeIds.clear()
     this.blockedDoors.clear()
     this.mapCache = null
@@ -117,6 +123,8 @@ export class ChunkWorld {
         this.doorToggle = message.doorToggle
         this.doorOpen = message.doorOpen
         this.doorHalf = message.doorHalf
+        this.cropGrowth = message.cropGrowth
+        this.cropDirection = message.cropDirection
         for (const [name, block] of Object.entries(this.blocks!)) {
           for (let id = block.min; id <= block.max; id++) this.stateNames[id] = name
         }
@@ -379,26 +387,50 @@ export class ChunkWorld {
   }
 
   /** The crop at (x, y, z) and its growth 0..7, or null. `growth` is a crop's only state, so it is the offset in its state range. */
-  cropAt (x: number, y: number, z: number): { kind: CropKind; growth: number } | null {
+  cropAt (x: number, y: number, z: number): Crop | null {
     const id = this.stateAt(x, y, z)
     if (id === null || !this.blocks) return null
-    for (const kind of CROP_KINDS) {
+    for (const kind of FARM_CROPS) {
       const range = this.blocks['minecraft:' + kind]
-      if (range && id >= range.min && id <= range.max) return { kind, growth: id - range.min }
+      if (range && id >= range.min && id <= range.max) {
+        const growth = this.cropGrowth[id] ?? (id - range.min)
+        return kind === 'cocoa' ? { kind, growth, direction: this.cropDirection[id] } : { kind, growth }
+      }
     }
     return null
+  }
+
+  /** Preserve cane bases and stems; block fruit requires an adjacent mature matching stem. */
+  harvestable (x: number, y: number, z: number, crop = this.cropAt(x, y, z)): boolean {
+    if (!crop) return false
+    if (crop.kind === 'reeds') return this.blockNameAt(x, y - 1, z) === 'minecraft:reeds'
+    if (crop.kind === 'cocoa') return crop.growth === 2
+    // The Bedrock palette reserves 0..7, but vanilla berry bushes use stages 0..3.
+    if (crop.kind === 'sweet_berry_bush') return crop.growth === 3
+    if (crop.kind === 'melon_block' || crop.kind === 'pumpkin') {
+      const stem = this.blocks?.['minecraft:' + (crop.kind === 'pumpkin' ? 'pumpkin_stem' : 'melon_stem')]
+      if (!stem) return false
+      return [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dz]) => {
+        const id = this.stateAt(x + dx, y, z + dz)
+        return id !== null && id >= stem.min && id <= stem.max && this.cropGrowth[id] === RIPE_GROWTH
+      })
+    }
+    return crop.growth === RIPE_GROWTH
   }
 
   /**
    * Ripe crops (growth 7) whose column lies within `radius` blocks horizontally of `anchor`, nearest first (at most 256).
    * Scans only the loaded sections that touch the area; unknown sections simply yield nothing.
    */
-  async ripeCrops (anchor: Position, radius: number, signal?: AbortSignal): Promise<Array<Position & { kind: CropKind }>> {
+  async ripeCrops (anchor: Position, radius: number, signal?: AbortSignal, kinds: readonly CropKind[] = CROP_KINDS): Promise<Array<Position & { kind: CropKind; direction?: number }>> {
     if (!this.blocks) throw new WorldError('World data is not ready', 409)
-    const ripe = new Map<number, CropKind>()
-    for (const kind of CROP_KINDS) { const range = this.blocks['minecraft:' + kind]; if (range) ripe.set(range.min + RIPE_GROWTH, kind) }
+    const candidates = new Set<number>()
+    for (const kind of kinds) {
+      const range = this.blocks['minecraft:' + kind]
+      if (range) for (let id = range.min; id <= range.max; id++) candidates.add(id)
+    }
     const generation = this.generation
-    const found: Array<Position & { kind: CropKind; distance: number }> = []
+    const found: Array<Position & Crop & { distance: number }> = []
     const near = (from: number, to: number, value: number) => Math.max(from - value, 0, value - to)
     for (const column of [...this.chunks.values()]) {
       if (Math.hypot(near(column.x * 16, column.x * 16 + 16, anchor.x), near(column.z * 16, column.z * 16 + 16, anchor.z)) > radius) continue
@@ -408,16 +440,16 @@ export class ChunkWorld {
         if (signal?.aborted) throw new WorldError('Search cancelled', 499)
         if (this.generation !== generation) throw new WorldError('World changed; repeat search', 409)
         for (let i = 0; i < 4096; i++) {
-          const kind = ripe.get(section.data[i])
-          if (!kind) continue
+          if (!candidates.has(section.data[i])) continue
           const x = column.x * 16 + (i >>> 8); const y = sectionY * 16 + ((i >>> 4) & 15); const z = column.z * 16 + (i & 15)
           const distance = Math.hypot(x + .5 - anchor.x, z + .5 - anchor.z)
-          if (distance <= radius) found.push({ x, y, z, kind, distance })
+          const crop = this.cropAt(x, y, z)
+          if (distance <= radius && crop && this.harvestable(x, y, z, crop)) found.push({ x, y, z, ...crop, distance })
         }
       }
     }
-    found.sort((a, b) => a.distance - b.distance || a.x - b.x || a.z - b.z || a.y - b.y)
-    return found.slice(0, 256).map(({ x, y, z, kind }) => ({ x, y, z, kind }))
+    found.sort((a, b) => a.distance - b.distance || a.x - b.x || a.z - b.z || b.y - a.y)
+    return found.slice(0, 256).map(({ distance, growth, ...crop }) => crop)
   }
 
   // A hand-openable door or fence gate in block (x, y, z), resolved to its lower half: position, open state and network runtime ID.

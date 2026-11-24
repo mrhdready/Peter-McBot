@@ -123,3 +123,15 @@ Bitte Fälle mit ❌ samt Browser, Fenstergröße und Beobachtung (Screenshot hi
 7. Reconnect: Anker und Filter bleiben aktiv, alte Drops verschwinden. Prozessneustart: Collector aus.
 
 Diese Schritte sind manuelle Live-Prüfungen und bewegen bei aktivem Collector einen echten Spieler.
+
+
+## Farm-Erntegruppen und Rückkehr
+
+Diese Prüfung bewegt einen echten Spieler und verändert die vorbereitete Testfarm.
+
+1. Ohne gespeicherte Farmeinstellungen sind nur Feldfrüchte eingeschaltet. Alle fünf Schalter lassen sich per Maus und Tastatur bedienen. Zweiten Browser öffnen: Änderungen erscheinen dort ebenfalls. Prozess neu starten: Auswahl bleibt, Farm-Mode ist aus.
+2. Je eine reife und unreife Feldfrucht, Kakao und Süßbeeren vorbereiten. Zuckerrohr mit einem, zwei und drei Blöcken Höhe sowie Melonen/Kürbisse mit und ohne ausgewachsenen passenden Stängel vorbereiten. Nur aktivierte Gruppen werden geerntet. Zuckerrohrbasis, Stängel, unreife Pflanzen und Blockfrüchte ohne passenden Stängel bleiben stehen. Beeren werden gepflückt, Sträucher nicht abgebaut.
+3. Kakao an allen vier Dschungelholzseiten auf unterschiedlichen Höhen anbauen. Der Bot nutzt sichere Standplätze davor und pflanzt an derselben Seite nach. Vom Boden aus unerreichbare Schoten bleiben erhalten. Auch Boden aus Halbstufen oder Farmland prüfen.
+4. Während einer Ernte die betroffene Gruppe ausschalten: begonnene Ernte samt Nachpflanzen endet, weitere Ziele bleiben stehen. Bei fehlenden Bohnen Nachschub aus einer erreichbaren Kiste prüfen. 64 Bohnen bleiben bei der Ablage im Inventar; überschüssige neue Erträge werden eingelagert.
+5. Anker durch „Bot-Position speichern“ auf einer bestimmten Etage speichern. Suchziele auf mehreren erreichbaren Etagen innerhalb des horizontalen Radius vorbereiten. Nach allen Ernten und Kistenbesuchen kehrt der Bot zur Ankeretage zurück. Auch eine leere Runde endet dort. Ziele außerhalb des horizontalen Radius bleiben stehen.
+6. Rückweg während einer Runde sperren: „Anker nicht erreichbar; wartet“ bleibt sichtbar, nach 30 Sekunden folgt ein neuer Versuch. Während der Rückkehr Stop oder eine UI-Navigation auslösen: keine spätere Farm-Navigation darf den manuellen Auftrag überschreiben.

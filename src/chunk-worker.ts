@@ -39,6 +39,15 @@ port.on('message', async message => {
       let nextShape = Math.max(0, ...Object.keys(shapes).map(Number)) + 1
       for (const side of Object.keys(panels)) { panelIds[side] = nextShape; shapes[nextShape++] = panels[side] }
       const stateValue = (states: any, name: string) => states?.[name]?.value ?? states?.[name]
+      const cropGrowth = new Int8Array(registry.blockStates.length).fill(-1)
+      const cropDirection = new Int8Array(registry.blockStates.length).fill(-1)
+      for (let id = 0; id < registry.blockStates.length; id++) {
+        const states = registry.blockStates[id]?.states
+        const growth = stateValue(states, 'growth') ?? stateValue(states, 'age')
+        if (typeof growth === 'number') cropGrowth[id] = growth
+        const direction = stateValue(states, 'direction')
+        if (typeof direction === 'number') cropDirection[id] = direction
+      }
       // 1 lower, 2 upper door half. Bedrock keeps facing and open state on the lower half; the world model resolves upper halves to it.
       const doorHalf = new Uint8Array(registry.blockStates.length)
       for (const block of Object.values(registry.blocksByName) as any[]) {
@@ -73,8 +82,8 @@ port.on('message', async message => {
           doorToggle[closed] = open; doorToggle[open] = closed; doorOpen[open] = 1
         }
       }
-      port.postMessage({ type: 'ready', blocks, air: registry.blocksByName.air.defaultState, runtimePairs, walkFlags, collisionIds, collisionShapes: shapes, doorToggle, doorOpen, doorHalf },
-        [runtimePairs.buffer, walkFlags.buffer, collisionIds.buffer, doorToggle.buffer, doorOpen.buffer, doorHalf.buffer])
+      port.postMessage({ type: 'ready', blocks, air: registry.blocksByName.air.defaultState, runtimePairs, walkFlags, collisionIds, collisionShapes: shapes, doorToggle, doorOpen, doorHalf, cropGrowth, cropDirection },
+        [runtimePairs.buffer, walkFlags.buffer, collisionIds.buffer, doorToggle.buffer, doorOpen.buffer, doorHalf.buffer, cropGrowth.buffer, cropDirection.buffer])
       return
     }
     const payload = Buffer.from(message.payload)

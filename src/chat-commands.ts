@@ -1,3 +1,4 @@
+import type { FarmAnchor } from './farming.js'
 /*
  * Chat commands: a chat or whisper line that starts with the bot's name ("Peter go Haus", "@Peter, find diamond_ore")
  * is a command. Replies go to public chat. Navigation runs through the bot's command queue like a web request.
@@ -400,12 +401,12 @@ export class ChatCommands {
     if (action !== 'on' && action !== 'an' && action !== 'once') return this.say('farming on [Wegpunkt], farming once [Wegpunkt], farming off oder farming')
     const p = this.bot.state.position
     if (!p) return this.say('Meine Position ist gerade unbekannt.')
-    let anchor = { x: p.x, z: p.z, label: 'meiner Position' }
+    let anchor: FarmAnchor = { x: p.x, z: p.z, y: p.y - 1.62, label: 'meiner Position' }
     const name = placeWords.join(' ')
     if (name) {
       const place = await this.place(name)
       if (!place) return
-      anchor = { x: place.x + .5, z: place.z + .5, label: place.name }
+      anchor = { x: place.x + .5, z: place.z + .5, ...(place.y === undefined ? {} : { y: place.y }), label: place.name }
     }
     log(`farming ${action} von ${sender}`)
     const error = farm.start(anchor, action === 'once')

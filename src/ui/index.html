@@ -101,6 +101,14 @@
 <details class="panel farm" id="farm-panel" open>
 <summary><h2>Farm</h2></summary>
 <div class="skin-fields"><label for="farm-anchor">Anker</label><select id="farm-anchor"><option value="" selected>Aktuelle Bot-Position</option></select></div>
+<fieldset class="farm-groups"><legend>Erntegruppen</legend>
+<label class="farm-switch"><span>Feldfrüchte <small>Weizen, Karotten, Kartoffeln, Rote Bete</small></span><input id="farm-field" type="checkbox" role="switch" checked><span class="switch-track" aria-hidden="true"></span></label>
+<label class="farm-switch"><span>Blockfrüchte <small>Melonen, Kürbisse – Stängel bleiben stehen</small></span><input id="farm-blocks" type="checkbox" role="switch"><span class="switch-track" aria-hidden="true"></span></label>
+<label class="farm-switch"><span>Zuckerrohr <small>Untersten Block erhalten</small></span><input id="farm-cane" type="checkbox" role="switch"><span class="switch-track" aria-hidden="true"></span></label>
+<label class="farm-switch"><span>Kakao <small>Reife Schoten ernten und nachpflanzen</small></span><input id="farm-cocoa" type="checkbox" role="switch"><span class="switch-track" aria-hidden="true"></span></label>
+<label class="farm-switch"><span>Süßbeeren <small>Reife Beeren pflücken, Strauch erhalten</small></span><input id="farm-berries" type="checkbox" role="switch"><span class="switch-track" aria-hidden="true"></span></label>
+</fieldset>
+<p class="hint">Auswahl wird gespeichert. Nach jeder Runde kehrt der Bot zum Anker zurück.</p>
 <div class="actions"><button id="farm-toggle" class="primary" type="button">Farming starten</button></div>
 <p id="farm-status" role="status">Farming ist aus.</p>
 <p id="farm-feedback" role="status"></p>

@@ -15,6 +15,7 @@ const item = (networkId, count, stackId) => ({ network_id: networkId, count, met
 function setup (t, { inventory = [item(300, 5, 11)] } = {}) {
   let time = 1000
   const crops = new Map()
+  const blocks = new Map()
   const drops = []
   const pickups = []
   let bot
@@ -26,9 +27,10 @@ function setup (t, { inventory = [item(300, 5, 11)] } = {}) {
       if (name === 'player_auth_input') {
         for (const action of params.block_action ?? []) {
           const p = action.position
-          if (action.action === 'stop_break' && crops.get(key(p.x, p.y, p.z))?.growth === 7) {
+          if (action.action === 'stop_break' && crops.has(key(p.x, p.y, p.z))) {
             crops.delete(key(p.x, p.y, p.z))
             for (const drop of drops.splice(0)) this.emit('add_item_entity', drop)
+            this.emit('harvest', p)
           }
         }
         for (const [id, entity] of bot.state.items) {
@@ -38,6 +40,15 @@ function setup (t, { inventory = [item(300, 5, 11)] } = {}) {
         }
       }
       const data = name === 'inventory_transaction' ? params.transaction.transaction_data : null
+      if (data?.action_type === 'click_block') {
+        const at = data.block_position
+        const bush = crops.get(key(at.x, at.y, at.z))
+        if (bush?.kind === 'sweet_berry_bush') bush.growth = 1
+        if (data.held_item.network_id === 305 && data.face !== 1) {
+          const [dx, dz, direction] = {2:[0,-1,0], 3:[0,1,2], 4:[-1,0,3], 5:[1,0,1]}[data.face]
+          crops.set(key(at.x + dx, at.y, at.z + dz), {kind:'cocoa', growth:0, direction})
+        }
+      }
       if (data?.action_type === 'click_block' && data.face === 1) crops.set(key(data.block_position.x, data.block_position.y + 1, data.block_position.z), { kind: data.held_item.network_id === 303 ? 'beetroot' : 'wheat', growth: 0 })
     }
     close () { this.emit('close') }
@@ -49,18 +60,18 @@ function setup (t, { inventory = [item(300, 5, 11)] } = {}) {
   const client = clients[0]
   client.emit('start_game', { player_position: { x: .5, y: 72.62, z: .5 }, dimension: 0 })
   client.emit('spawn')
-  client.emit('item_registry', { itemstates: [{ name: 'minecraft:wheat_seeds', runtime_id: 300 }, { name: 'minecraft:wheat', runtime_id: 301 }, { name: 'minecraft:dirt', runtime_id: 302 }, { name: 'minecraft:beetroot_seeds', runtime_id: 303 }, { name: 'minecraft:beetroot', runtime_id: 304 }] })
+  client.emit('item_registry', { itemstates: [{ name: 'minecraft:wheat_seeds', runtime_id: 300 }, { name: 'minecraft:wheat', runtime_id: 301 }, { name: 'minecraft:dirt', runtime_id: 302 }, { name: 'minecraft:beetroot_seeds', runtime_id: 303 }, { name: 'minecraft:beetroot', runtime_id: 304 }, { name: 'minecraft:cocoa_beans', runtime_id: 305 }] })
   client.emit('inventory_content', { window_id: 'inventory', input: Array.from({ length: 36 }, (_, i) => inventory[i] ?? { network_id: 0 }) })
   bot.state.terrain = new Terrain((x, y, z) => Math.abs(x) < 10 && Math.abs(z) < 10 ? { boxes: y === 70 ? [[0, 0, 0, 1, 1, 1]] : [], support: y === 70 } : null)
   bot.state.planningTerrain = bot.state.terrain
   bot.state.chunks.set('0:0', { x: 0, z: 0, sections: new Map(), attempts: new Map(), requests: new Map() })
   bot.state.cropAt = (x, y, z) => crops.get(key(x, y, z)) ?? null
-  bot.state.blockNameAt = (x, y, z) => crops.has(key(x, y, z)) ? 'minecraft:wheat' : y === 70 ? 'minecraft:farmland' : 'minecraft:air'
+  bot.state.blockNameAt = (x, y, z) => blocks.get(key(x, y, z)) ?? (crops.has(key(x, y, z)) ? 'minecraft:' + crops.get(key(x, y, z)).kind : y === 70 ? 'minecraft:farmland' : 'minecraft:air')
   bot.state.blockRuntimeIdAt = () => 1
   let scans = 0
   bot.state.ripeCrops = async () => {
     scans++
-    return [...crops].filter(([, crop]) => crop.growth === 7).map(([at, crop]) => { const [x, y, z] = at.split(':').map(Number); return { x, y, z, kind: crop.kind } })
+    return [...crops].filter(([at, crop]) => bot.state.harvestable(...at.split(':').map(Number), crop)).map(([at, crop]) => { const [x, y, z] = at.split(':').map(Number); return { x, y, z, kind: crop.kind, ...(crop.direction === undefined ? {} : {direction:crop.direction}) } })
   }
   const reports = []
   bot.farm.onReport = text => reports.push(text)
@@ -70,7 +81,7 @@ function setup (t, { inventory = [item(300, 5, 11)] } = {}) {
     return done()
   }
   const blockActions = () => client.sent.filter(([name, params]) => name === 'player_auth_input' && params.block_action).map(([, params]) => params.block_action.map(action => action.action))
-  return { bot, client, clients, crops, drops, pickups, reports, run, blockActions, scans: () => scans, now: () => time }
+  return { bot, client, clients, crops, blocks, drops, pickups, reports, run, blockActions, scans: () => scans, now: () => time }
 }
 
 test('one round harvests a 3×3 cluster with block actions, collects the drop, replants after abort_break and reports once', async t => {
@@ -178,4 +189,111 @@ test('beetroot is replanted with its seeds and counts only seeds above 64 plus a
   assert.ok(DEPOSIT.includes('beetroot_seeds'))
   assert.ok(DEPOSIT.includes('beetroot'))
   assert.equal(bot.farm.surplus(), 9, 'Eight fruit and one seed above the reserve may be stored')
+})
+
+
+test('sugar cane harvesting preserves the base and returns to the anchor after the round', async t => {
+  const {bot, crops, run} = setup(t)
+  for (const y of [71, 72, 73]) crops.set(key(3, y, 0), {kind:'reeds', growth:0})
+  bot.farm.configure({field:false, blocks:false, cane:true, cocoa:false, berries:false})
+  bot.farm.start({x:.5, z:.5, label:'Basis'}, true)
+  assert.ok(await run(() => !bot.farm.status().enabled))
+  assert.deepEqual(crops.get(key(3, 71, 0)), {kind:'reeds', growth:0})
+  assert.equal(crops.has(key(3, 72, 0)), false)
+  assert.equal(crops.has(key(3, 73, 0)), false)
+  assert.equal(Math.floor(bot.state.position.x), 0)
+  assert.equal(Math.floor(bot.state.position.z), 0)
+  assert.ok(Math.abs(bot.state.position.y - 72.62) < .08)
+  assert.equal(bot.farm.status().lastSummary, '2 Zuckerrohr geerntet, 0 neu gepflanzt.')
+})
+
+test('only enabled groups are harvested; disabling a group completes the started harvest and replant', async t => {
+  const {bot, client, crops, run} = setup(t)
+  crops.set(key(0,71,1), {kind:'wheat', growth:7})
+  crops.set(key(1,71,1), {kind:'wheat', growth:7})
+  crops.set(key(2,72,1), {kind:'reeds', growth:0})
+  crops.set(key(2,71,1), {kind:'reeds', growth:0})
+  client.once('harvest', () => bot.farm.configure({field:false, blocks:false, cane:false, cocoa:false, berries:false}))
+  bot.farm.start({x:.5,z:.5,label:'Basis'}, true)
+  assert.ok(await run(() => !bot.farm.status().enabled))
+  assert.equal(crops.get(key(0,71,1)).growth, 0, 'The started harvest is replanted')
+  assert.equal(crops.get(key(1,71,1)).growth, 7, 'The next target is left alone')
+  assert.ok(crops.has(key(2,72,1)), 'Disabled cane is untouched')
+})
+
+test('ripe berries are picked by interaction without breaking or planting the bush', async t => {
+  const {bot, crops, client, run, blockActions} = setup(t)
+  crops.set(key(1,71,0), {kind:'sweet_berry_bush', growth:3})
+  crops.set(key(2,71,0), {kind:'sweet_berry_bush', growth:2})
+  bot.farm.configure({field:false, blocks:false, cane:false, cocoa:false, berries:true})
+  bot.farm.start({x:.5,z:.5,label:'Basis'}, true)
+  assert.ok(await run(() => !bot.farm.status().enabled))
+  assert.equal(crops.get(key(1,71,0)).growth, 1)
+  assert.equal(crops.get(key(2,71,0)).growth, 2)
+  assert.deepEqual(blockActions(), [])
+  const clicks = client.sent.filter(([name]) => name === 'inventory_transaction')
+  assert.equal(clicks.length, 1)
+  assert.equal(clicks[0][1].transaction.transaction_data.held_item.network_id, 0)
+})
+
+test('cocoa uses a reachable floor below the pod and replants on the original log face in all orientations', async t => {
+  const offsets = [[0,1],[-1,0],[0,-1],[1,0]]
+  for (let direction = 0; direction < 4; direction++) {
+    const {bot, crops, blocks, client, run} = setup(t, {inventory:[item(305,64,19)]})
+    const [dx,dz] = offsets[direction]
+    crops.set(key(2,74,2), {kind:'cocoa', growth:2, direction})
+    blocks.set(key(2+dx,74,2+dz), 'minecraft:jungle_log')
+    crops.set(key(5,79,5), {kind:'cocoa', growth:2, direction})
+    blocks.set(key(5+dx,79,5+dz), 'minecraft:jungle_log')
+    bot.farm.configure({field:false, blocks:false, cane:false, cocoa:true, berries:false})
+    bot.farm.start({x:.5,z:.5,label:'Basis'}, true)
+    assert.ok(await run(() => !bot.farm.status().enabled))
+    assert.deepEqual(crops.get(key(2,74,2)), {kind:'cocoa',growth:0,direction})
+    assert.equal(crops.get(key(5,79,5)).growth, 2, 'Too high above the floor remains untouched')
+    const click = client.sent.find(([name]) => name === 'inventory_transaction')[1].transaction.transaction_data
+    assert.deepEqual(click.block_position, {x:2+dx,y:74,z:2+dz})
+    assert.equal(click.face, [2,5,3,4][direction])
+    const inputs = client.sent.filter(([name, p]) => name === 'player_auth_input' && p.block_action?.some(a => a.action === 'start_break'))
+    assert.ok(inputs.every(([,p]) => Math.abs(p.position.y - 72.62) < .08), 'Harvest from floor level')
+  }
+})
+
+test('blocked anchor return stays visible and retries; manual navigation cancels farming', async t => {
+  const {bot, run, now} = setup(t)
+  bot.farm.start({x:.5,y:75,z:.5,label:'Oben'})
+  assert.ok(await run(() => bot.farm.status().activity === 'Anker nicht erreichbar; wartet'))
+  const first = now()
+  await run(() => now() - first >= 31000)
+  assert.equal(bot.farm.status().enabled, true)
+  assert.equal(bot.farm.status().activity, 'Anker nicht erreichbar; wartet')
+  bot.enqueue({type:'navigate', x:2, z:0}); bot.step()
+  assert.equal(bot.farm.status().enabled, false)
+  await run(() => bot.state.navigation.status === 'arrived')
+  assert.equal(bot.state.navigation.target.x, 2)
+})
+
+
+test('block fruit uses sustained breaking; stems, decoration and unripe crops stay untouched', async t => {
+  const {bot,client,crops,run} = setup(t)
+  crops.set(key(1,71,0),{kind:'melon_block',growth:-1})
+  crops.set(key(2,71,0),{kind:'pumpkin',growth:-1})
+  crops.set(key(3,71,0),{kind:'pumpkin',growth:-1})
+  crops.set(key(0,71,0),{kind:'melon_stem',growth:7})
+  const original = bot.state.harvestable.bind(bot.state)
+  bot.state.harvestable = (x,y,z,crop = bot.state.cropAt(x,y,z)) => crop?.kind === 'melon_block' ? x===1 : crop?.kind === 'pumpkin' ? x===2 : original(x,y,z,crop)
+  bot.farm.configure({field:false,blocks:true,cane:false,cocoa:false,berries:false})
+  bot.farm.start({x:.5,z:.5,label:'Basis'},true)
+  assert.ok(await run(() => !bot.farm.status().enabled))
+  assert.equal(crops.has(key(1,71,0)),false)
+  assert.equal(crops.has(key(2,71,0)),false)
+  assert.ok(crops.has(key(3,71,0)))
+  assert.ok(crops.has(key(0,71,0)))
+  const actions = client.sent.flatMap(([name,p]) => name === 'player_auth_input' ? p.block_action ?? [] : [])
+  assert.equal(actions.filter(a=>a.action==='start_break').length,2)
+  assert.ok(actions.filter(a=>a.action==='continue_break').length>=60)
+  assert.equal(client.sent.filter(([name])=>name==='inventory_transaction').length,0)
+  const serializer = require('bedrock-protocol/src/transforms/serializer').createSerializer('1.26.60')
+  for (const [name,params] of client.sent.filter(([name])=>name==='player_auth_input' || name==='mob_equipment')) {
+    assert.ok(serializer.createPacketBuffer({name,params}).length>0,'Sustained break packets serialize')
+  }
 })
