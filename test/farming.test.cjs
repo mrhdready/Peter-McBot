@@ -12,7 +12,7 @@ const item = (networkId, count, stackId) => ({ network_id: networkId, count, met
 
 // A bot on a flat floor (y=70, feet at 71) with stubbed crops. The fake server breaks a ripe crop on stop_break (and drops
 // the queued items), hands drops to the bot when an input packet stands on their column, and plants the held seed after a top-face click.
-function setup (t, { inventory = [item(300, 5, 11)] } = {}) {
+function setup (t, { inventory = [item(300, 5, 11)], openInventory = true, moveStatus = 'ok' } = {}) {
   let time = 1000
   const serverSlots = Array.from({ length: 36 }, (_, i) => inventory[i] ?? { network_id: 0 })
   const crops = new Map()
@@ -20,14 +20,31 @@ function setup (t, { inventory = [item(300, 5, 11)] } = {}) {
   const drops = []
   const pickups = []
   let bot
+  let inventoryOpen = false
   class FarmClient extends EventEmitter {
     entityId = 10n
     sent = []
+    acknowledgeInventory (windowType = 'inventory') {
+      inventoryOpen = true
+      this.emit('container_open', { window_id: 0, window_type: windowType })
+    }
     queue (name, params) {
       this.sent.push([name, params])
+      if (name === 'interact' && params.action_id === 'open_inventory' && openInventory) queueMicrotask(() => {
+        this.acknowledgeInventory()
+      })
+      if (name === 'container_close') {
+        inventoryOpen = false
+        this.emit('container_close', { window_id: params.window_id })
+      }
       if (name === 'item_stack_request') queueMicrotask(() => {
         const request = params.requests[0]
         const action = request.actions[0]
+        assert.ok(inventoryOpen, 'BDS requires an acknowledged inventory screen before moving stacks')
+        if (moveStatus !== 'ok') {
+          this.emit('item_stack_response', { responses: [{ status: moveStatus, request_id: request.request_id }] })
+          return
+        }
         for (const ref of [action.source, action.destination]) {
           assert.equal(ref.slot_type.container_id, ref.slot < 9 ? 'hotbar' : 'hotbar_and_inventory')
           assert.equal(ref.stack_id, serverSlots[ref.slot].stack_id ?? 0)
@@ -412,7 +429,69 @@ test('empty hand reports a full inventory without discarding items', async t => 
   bot.farm.start({ x: .5, z: .5, label: 'Bot' }, true)
   assert.ok(await run(() => !bot.farm.status().enabled))
   assert.equal(crops.get(key(1, 71, 1)).growth, 3)
-  assert.ok(reports.some(report => report.includes('freier Hotbar-Slot')))
+  assert.ok(reports.some(report => report.includes('Kein Platz zum Freiräumen')))
   assert.equal(client.sent.some(([name]) => name === 'item_stack_request'), false)
   assert.equal(bot.state.inventory.items()[0].count, 2304)
+})
+
+
+test('hotbar relocation waits for container_open and closes inventory before equipping', async t => {
+  const inventory = Array.from({ length: 9 }, (_, i) => item(302, 64, i + 1))
+  const { bot, client, crops, run } = setup(t, { inventory, openInventory: false })
+  crops.set(key(1, 71, 0), { kind: 'sweet_berry_bush', growth: 3 })
+  bot.farm.configure({field:false, blocks:false, cane:false, cocoa:false, berries:true})
+  bot.farm.start({x:.5,z:.5,label:'Basis'}, true)
+  assert.ok(await run(() => client.sent.some(([name]) => name === 'interact')))
+  await run(() => false, 10)
+  assert.equal(client.sent.some(([name]) => name === 'item_stack_request'), false)
+  client.acknowledgeInventory(-1)
+  assert.ok(await run(() => !bot.farm.status().enabled))
+  const names = client.sent.map(([name]) => name)
+  assert.ok(names.indexOf('interact') < names.indexOf('item_stack_request'))
+  assert.ok(names.indexOf('item_stack_request') < names.indexOf('container_close'))
+  assert.ok(names.indexOf('container_close') < names.indexOf('mob_equipment'))
+  assert.equal(crops.get(key(1,71,0)).growth, 1)
+})
+
+test('missing inventory acknowledgement sends no move and reports the opening timeout', async t => {
+  const inventory = Array.from({ length: 9 }, (_, i) => item(302, 64, i + 1))
+  const { bot, client, crops, reports, run } = setup(t, { inventory, openInventory: false })
+  crops.set(key(1,71,0), {kind:'sweet_berry_bush',growth:3})
+  bot.farm.configure({field:false,blocks:false,cane:false,cocoa:false,berries:true})
+  bot.farm.start({x:.5,z:.5,label:'Basis'}, true)
+  assert.ok(await run(() => !bot.farm.status().enabled))
+  assert.equal(client.sent.some(([name]) => name === 'item_stack_request'), false)
+  assert.ok(reports.includes('Der Server hat mein Inventarfenster nicht geöffnet.'))
+})
+
+test('cancelling an inventory open closes a late acknowledgement without moving items', async t => {
+  const inventory = Array.from({ length: 9 }, (_, i) => item(302, 64, i + 1))
+  const { bot, client, crops, run } = setup(t, { inventory, openInventory: false })
+  crops.set(key(1,71,0), {kind:'sweet_berry_bush',growth:3})
+  bot.farm.configure({field:false,blocks:false,cane:false,cocoa:false,berries:true})
+  bot.farm.start({x:.5,z:.5,label:'Basis'}, true)
+  assert.ok(await run(() => client.sent.some(([name]) => name === 'interact')))
+  bot.farm.off()
+  await run(() => false, 2)
+  client.emit('container_open', {window_id:0,window_type:'inventory'})
+  await run(() => false, 2)
+  assert.equal(client.sent.filter(([name]) => name === 'container_close').length, 1)
+  assert.equal(client.sent.some(([name]) => name === 'item_stack_request'), false)
+  assert.equal(client.sent.some(([name]) => name === 'mob_equipment'), false)
+})
+
+test('status 50 reports a rejected move and avoids repeating it for every crop in the round', async t => {
+  const inventory = Array.from({ length: 9 }, (_, i) => item(302, 64, i + 1))
+  const { bot, client, crops, reports, run } = setup(t, { inventory, moveStatus: 50 })
+  crops.set(key(1,71,0), {kind:'sweet_berry_bush',growth:3})
+  crops.set(key(0,71,1), {kind:'sweet_berry_bush',growth:3})
+  bot.farm.configure({field:false,blocks:false,cane:false,cocoa:false,berries:true})
+  bot.farm.start({x:.5,z:.5,label:'Basis'}, true)
+  assert.ok(await run(() => !bot.farm.status().enabled))
+  await run(() => false, 2)
+  assert.equal(client.sent.filter(([name]) => name === 'item_stack_request').length, 1)
+  assert.equal(client.sent.filter(([name]) => name === 'container_close').length, 1)
+  assert.ok(reports.includes('Der Server hat das Umlagern abgelehnt (Status 50).'))
+  assert.equal(reports.some(report => report.includes('Kein Platz')), false)
+  assert.equal(bot.state.inventory.items()[0].count, 576)
 })

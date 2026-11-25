@@ -372,6 +372,7 @@ export class BotController {
         }
       })
       client.on('container_open', (packet: { window_id?: string | number; window_type?: unknown; coordinates?: Position }) => {
+        if (active() && packet.window_id !== undefined) this.farm.inventoryOpened(packet.window_id, packet.window_type)
         const job = this.chestJob
         if (!active() || job?.phase !== 'opening' || packet.window_id === undefined) return
         chestLog(`Kiste bei (${job.chest.x}, ${job.chest.y}, ${job.chest.z}) offen: Fenster ${packet.window_id}, Typ ${String(packet.window_type)}.`)
@@ -379,6 +380,7 @@ export class BotController {
         job.phase = 'content'; job.since = this.now()
       })
       client.on('container_close', (packet: { window_id?: string | number }) => {
+        if (active() && packet.window_id !== undefined) this.farm.inventoryClosed(packet.window_id)
         const job = this.chestJob
         if (!active() || !job || job.windowId === null || packet.window_id !== job.windowId) return
         // Our own close is confirmed; any other close comes from the server (e.g. the chest was broken).

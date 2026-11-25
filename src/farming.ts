@@ -96,6 +96,10 @@ export class Farmer {
   private haltNavigation = false
   private navToken = 0
   private navEnd: string | null = null
+  private inventoryWindow: { windowId: string | number; windowType: unknown } | null = null
+  private inventoryOpening = false
+  private inventoryClosing = false
+  private inventoryFailure: string | null = null
   private chestOpen = false
   // Spots harvested by the bot that still wait for a seed; memory only.
   private unplanted: Spot[] = []
@@ -164,6 +168,9 @@ export class Farmer {
   /** The connection is gone: the running action ends, farming stays on and continues after the next spawn. */
   disconnected () {
     this.cancel()
+    this.inventoryWindow = null
+    this.inventoryOpening = false
+    this.inventoryClosing = false
     this.nextScanAt = 0
     this.equipped = null
   }
@@ -171,6 +178,16 @@ export class Farmer {
   /** Called by the bot when a navigation the farmer started has ended. */
   navigationEnded (token: number, status: string) {
     if (token === this.navToken) this.navEnd = status
+  }
+
+  inventoryOpened (windowId: string | number, windowType: unknown) {
+    if (!this.inventoryOpening || (windowType !== 'inventory' && windowType !== -1)) return
+    this.inventoryWindow = { windowId, windowType }
+    this.inventoryOpening = false
+  }
+
+  inventoryClosed (windowId: string | number) {
+    if (this.inventoryWindow?.windowId === windowId) this.inventoryWindow = null
   }
 
   acceptsNavigation (token: number) { return this.enabled && this.running && this.navToken === token }
@@ -188,6 +205,12 @@ export class Farmer {
 
   /** One tick while the bot is spawned: starts a round when due and advances the running wait. */
   step (send: Send) {
+    if (this.inventoryClosing && this.inventoryWindow) {
+      const { windowId, windowType } = this.inventoryWindow
+      this.inventoryWindow = null
+      this.inventoryClosing = false
+      send('container_close', { window_id: windowId, window_type: windowType, server: false })
+    }
     if (this.haltNavigation) { this.haltNavigation = false; this.host.stopNavigation() }
     if (!this.enabled) return
     const now = this.host.now()
@@ -216,6 +239,7 @@ export class Farmer {
   }
 
   private cancel () {
+    this.inventoryClosing = true
     this.token++
     this.running = false
     this.haltNavigation = true
@@ -285,6 +309,7 @@ export class Farmer {
   }
 
   private async round () {
+    this.inventoryFailure = null
     const anchor = this.anchor!
     const state = this.host.state
     const here = () => state.position!
@@ -397,7 +422,7 @@ export class Farmer {
 
   private async holdEmpty (look: Position): Promise<number | null> {
     const slot = await this.freeHotbarSlot()
-    if (slot < 0) { this.problem('emptyhand', 'Ein freier Hotbar-Slot wird zum Ernten benötigt.'); return null }
+    if (slot < 0) { this.problem('emptyhand', this.inventoryFailure ?? 'Kein Platz zum Freiräumen eines Hotbar-Slots.'); return null }
     await this.act(send => send('mob_equipment', { runtime_entity_id: this.host.entityId(), item: this.host.state.inventory.packetItem(slot), slot, selected_slot: slot, window_id: 'inventory' }))
     this.equipped = null
     await this.ticks(150, () => false, send => this.host.navigator.lookAt(send, look))
@@ -405,12 +430,32 @@ export class Farmer {
   }
 
   private async moveStack (move: Move, swap = false) {
+    if (this.inventoryFailure) return false
+    const token = this.token
     const inventory = this.host.state.inventory
-    const box: { request?: Promise<StackResponse | null> } = {}
-    await this.act(send => { box.request = (swap ? inventory.swap(send, move, this.host.now()) : inventory.place(send, move, this.host.now())).catch(() => null) })
-    const response = await this.external(box.request!)
-    this.equipped = null
-    return response !== null && (response.status === 'ok' || response.status === 0)
+    try {
+      await this.act(send => {
+        this.inventoryOpening = true
+        this.inventoryClosing = false
+        send('interact', { action_id: 'open_inventory', target_entity_id: this.host.entityId(), has_position: false })
+      })
+      if (!(await this.ticks(3000, () => this.inventoryWindow !== null))) {
+        this.inventoryFailure = 'Der Server hat mein Inventarfenster nicht geöffnet.'
+        return false
+      }
+      const box: { request?: Promise<StackResponse | null> } = {}
+      await this.act(send => { box.request = (swap ? inventory.swap(send, move, this.host.now()) : inventory.place(send, move, this.host.now())).catch(() => null) })
+      const response = await this.external(box.request!)
+      this.equipped = null
+      if (!response || (response.status !== 'ok' && response.status !== 0)) {
+        this.inventoryFailure = response ? `Der Server hat das Umlagern abgelehnt (Status ${response.status}).` : 'Der Server hat das Umlagern nicht bestätigt.'
+        return false
+      }
+      return true
+    } finally {
+      // The heartbeat also closes after cancellation and after a delayed open acknowledgement.
+      if (this.token === token) this.inventoryClosing = true
+    }
   }
 
   // Clear a hotbar slot without discarding items; only use a merge if the entire stack fits.
