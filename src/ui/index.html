@@ -13,7 +13,10 @@
 <section class="map-area" aria-labelledby="map-heading">
 <h2 id="map-heading" class="visually-hidden">Umgebung von oben</h2>
 <div class="view-selector"><label for="world-view">Ansicht</label> <select id="world-view"><option value="map">Karte</option><option value="3d">3D</option></select>
-<span id="viewer-controls" hidden><label for="viewer-camera">Kamera</label> <select id="viewer-camera"><option value="free">Frei</option><option value="bot">Bot-Sicht</option></select> <button id="viewer-home" type="button">Zum Bot</button></span></div>
+<span id="viewer-controls" hidden><label for="viewer-camera">Kamera</label> <select id="viewer-camera"><option value="free">Frei</option><option value="bot">Bot-Sicht</option></select>
+<span class="viewer-camera-actions"><button id="viewer-home" type="button">Zum Bot</button><span class="viewer-inversion" role="group" aria-label="Mauszugrichtung invertieren">Invertieren:
+<label title="Horizontale Mauszugrichtung invertieren"><input id="viewer-invert-x" type="checkbox" role="switch" aria-label="Horizontale Mauszugrichtung invertieren"> X</label>
+<label title="Vertikale Mauszugrichtung invertieren"><input id="viewer-invert-y" type="checkbox" role="switch" aria-label="Vertikale Mauszugrichtung invertieren"> Y</label></span></span></span></div>
 <div id="viewer-panel" hidden><div id="viewer-canvas"></div><p id="viewer-status" role="status"></p><p class="hint">Frei: Maus ziehen zum Umsehen, WASD bewegen, Q/E abwärts/aufwärts. 3D zeigt aktuell geladene Chunks um den Bot; die Karte enthält zusätzlich gespeicherte Oberflächen. Ziele und Markierungen sind auf der Karte verfügbar.</p></div>
 <div class="map-stage">
 <div id="map-frame" hidden><canvas id="map-ground" aria-hidden="true"></canvas>

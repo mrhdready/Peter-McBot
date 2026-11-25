@@ -11,10 +11,12 @@
 @@ -27,11 +28,12 @@
      for (let i = 0; i < numWorkers; i++) {
        // Node environement needs an absolute path, but browser needs the url of the file
-       let src = __dirname
+-      let src = __dirname
 -      if (typeof window !== 'undefined') src = 'worker.js'
-+      if (typeof window !== 'undefined') src = '/viewer/worker.js'
-       else src += '/worker.js'
+-      else src += '/worker.js'
++      const src = typeof window !== 'undefined'
++        ? '/viewer/worker.js'
++        : __dirname + '/worker.js'
  
        const worker = new Worker(src)
        worker.onmessage = ({ data }) => {

@@ -26,6 +26,8 @@ window.createBotViewer = async function (container, report, signal) {
   let session = null;
   let pose = null;
   let mode = 'free';
+  let invertX = false;
+  let invertY = false;
   let centered = false;
   let yaw = 0;
   let pitch = 0;
@@ -104,8 +106,8 @@ window.createBotViewer = async function (container, report, signal) {
   });
   listen(renderer.domElement, 'pointermove', event => {
     if (!drag || mode !== 'free') return;
-    yaw -= (event.clientX - drag.x) * .004;
-    pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, pitch - (event.clientY - drag.y) * .004));
+    yaw -= (event.clientX - drag.x) * .004 * (invertX ? -1 : 1);
+    pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, pitch - (event.clientY - drag.y) * .004 * (invertY ? -1 : 1)));
     drag = { x: event.clientX, y: event.clientY };
   });
   listen(renderer.domElement, 'pointerup', () => { drag = null; });
@@ -120,10 +122,17 @@ window.createBotViewer = async function (container, report, signal) {
   listen(renderer.domElement, 'blur', () => keys.clear());
   const animate = time => {
     if (disposed) return;
-    const step = Math.min((time - lastTime) / 1000, .05) * 12;
+    const elapsed = Math.max(0, (time - lastTime) / 1000);
+    const step = Math.min(elapsed, .05) * 12;
     lastTime = time;
     if (mode === 'bot' && pose?.position) {
-      viewer.setFirstPersonCamera(pose.position, pose.yaw, pose.pitch);
+      // Snap teleports; damp normal movement between 10-Hz poses without restarting tweens.
+      if (viewer.camera.position.distanceToSquared(pose.position) > 64) home();
+      const blend = 1 - Math.exp(-elapsed / .06);
+      viewer.camera.position.lerp(pose.position, blend);
+      yaw += Math.atan2(Math.sin(pose.yaw - yaw), Math.cos(pose.yaw - yaw)) * blend;
+      pitch += (pose.pitch - pitch) * blend;
+      viewer.setFirstPersonCamera(null, yaw, pitch);
     } else {
       viewer.camera.rotation.set(pitch, yaw, 0, 'YXZ');
       const forward = Number(keys.has('KeyW')) - Number(keys.has('KeyS'));
@@ -138,5 +147,9 @@ window.createBotViewer = async function (container, report, signal) {
   };
   frame = requestAnimationFrame(animate);
   socket.connect();
-  return { dispose, home, setMode (value) { mode = value; keys.clear(); drag = null; if (value === 'free') home(); } };
+  return {
+    dispose, home,
+    setMode (value) { mode = value; keys.clear(); drag = null; home(); },
+    setMouseInversion (horizontal, vertical) { invertX = horizontal; invertY = vertical; }
+  };
 };

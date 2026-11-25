@@ -2,6 +2,8 @@
 
 Select **3D** above the map. The map remains the default. **Frei** uses mouse dragging to look, WASD to move horizontally, and Q/E to descend/ascend. Focus the canvas before using the keyboard. **Bot-Sicht** follows the bot's eye position and reported/sent orientation. **Zum Bot** returns the free camera to the bot. Camera controls never send movement commands to Minecraft.
 
+The compact **Invertieren: X / Y** switches beside **Zum Bot** independently reverse mouse dragging in the free camera. Both switches default to off; the horizontal base direction is reversed in the camera controls themselves. Both choices are saved in this browser's local storage and restored after reloading; stored choices override the defaults. If storage is blocked, the switches still work for the current page. They do not change the bot's orientation. Bot-view position and look are smoothed between network updates using frame-rate-independent damping (60 ms time constant). Yaw takes the shortest turn across the ±180° boundary. Mode switches and position jumps exceeding eight blocks snap to the bot instead of flying through intervening terrain.
+
 The backend remains headless. WebGL is required only in the browser. Loading or rendering failures return to the map. Entities, route overlays and destination selection remain outside the 3D view; use the map for navigation and markers.
 
 ## Data and limits

@@ -4,6 +4,8 @@ const { once } = require('node:events')
 const { Worker } = require('node:worker_threads')
 const path = require('node:path')
 const fs = require('node:fs')
+const vm = require('node:vm')
+const { createRequire } = require('node:module')
 const { ViewerMapping, VIEWER_VERSION, viewerPose } = require('../dist/viewer-mapping.js')
 const { WorldState } = require('../dist/state.js')
 const { createWebServer } = require('../dist/web.js')
@@ -17,6 +19,21 @@ const mapping = new ViewerMapping('1.26.60')
 const id = name => bedrock.blocksByName[name].defaultState
 const section = () => ({ data: new Uint32Array(8192).fill(id('air')) })
 const column = () => ({ x: -1, z: 0, sections: new Map(), announced: true, attempts: new Map(), requests: new Map() })
+
+test('viewer starts mesh workers in a browser without Node globals', () => {
+  const rendererPath = require.resolve('prismarine-viewer/viewer/lib/worldrenderer')
+  const workers = []
+  const browser = vm.createContext({
+    window: {}, module: { exports: {} }, require: createRequire(rendererPath),
+    Worker: class { constructor (url) { workers.push(url) } }
+  })
+  assert.equal(vm.runInContext('typeof __dirname', browser), 'undefined')
+  vm.runInContext(fs.readFileSync(rendererPath, 'utf8'), browser, { filename: rendererPath })
+  const { WorldRenderer } = browser.module.exports
+  const renderer = new WorldRenderer(new (require('three').Scene)())
+  assert.equal(renderer.workers.length, 4)
+  assert.deepEqual(workers, Array(4).fill('/viewer/worker.js'))
+})
 
 test('viewer maps palettes, new stair corners, water layers and unsupported blocks to valid Java states', () => {
   assert.equal(mapping.stateId(id('stone')), java.blocksByName.stone.defaultState)
@@ -136,7 +153,10 @@ test('viewer socket streams changes, evictions and resets without moving the bot
   assert.equal((await fetch(base + '/viewer/../package.json')).status, 404)
   const page = await fetch(base)
   assert.match(page.headers.get('content-security-policy'), /worker-src 'self'/)
-  assert.match(await page.text(), /id="world-view"/)
+  const html = await page.text()
+  assert.match(html, /id="world-view"/)
+  assert.match(html, /id="viewer-invert-x" type="checkbox" role="switch"/)
+  assert.match(html, /id="viewer-invert-y" type="checkbox" role="switch"/)
 })
 
 test('viewer discards a column converted during a session reset and rejects foreign origins', { timeout: 15000 }, async t => {

@@ -42,11 +42,28 @@ byId('world-view').onchange = async () => {
     const instance = await window.createBotViewer(byId('viewer-canvas'), report, abort.signal);
     if (generation !== viewerGeneration) { instance.dispose(); return; }
     botViewer = instance;
+    applyViewerMouseInversion();
     botViewer.setMode(byId('viewer-camera').value);
   } catch (error) { report('3D nicht verfügbar: ' + error.message, true); }
 };
 byId('viewer-camera').onchange = () => botViewer?.setMode(byId('viewer-camera').value);
 byId('viewer-home').onclick = () => botViewer?.home();
+function applyViewerMouseInversion () {
+  botViewer?.setMouseInversion(byId('viewer-invert-x').checked, byId('viewer-invert-y').checked);
+}
+for (const axis of ['x', 'y']) {
+  const input = byId('viewer-invert-' + axis);
+  const key = 'mc-bot.viewer-invert-' + axis;
+  input.checked = false;
+  try {
+    const saved = localStorage.getItem(key);
+    if (saved === 'true' || saved === 'false') input.checked = saved === 'true';
+  } catch { /* Storage may be blocked; the controls still work for this page. */ }
+  input.onchange = () => {
+    applyViewerMouseInversion();
+    try { localStorage.setItem(key, String(input.checked)); } catch { /* Keep the current page usable without storage. */ }
+  };
+}
 const archiveEnabled = false;
 // Saved places, navigation history and map pins.
 const placesEnabled = false;
