@@ -76,6 +76,8 @@ export class ChunkWorld {
 
   constructor (readonly radius = 4, private version = '1.26.60') {}
 
+  get blockVersion () { return this.version }
+
   clearChunks () {
     this.flushSurfaceChanges(Infinity)
     this.dirtySurface.clear()

@@ -7,6 +7,8 @@ import { POI_ICONS, type PlaceStore } from './places.js'
 import { mapPerformancePanel, mapRuntimeMetrics } from './map-performance.js'
 import { SKIN_PNG_MAX, type SkinStore } from './skin.js'
 import { readFileSync } from 'node:fs'
+import { createReadStream } from 'node:fs'
+import { createViewerStream } from './viewer-stream.js'
 import path from 'node:path'
 
 // Optional place store (POIs, navigation history); its revision rides along in SSE.
@@ -31,7 +33,21 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
       response.writeHead(code, { 'Content-Type': 'application/json' })
       response.end(JSON.stringify(body))
     }
-    if (request.method === 'GET' && request.url === '/api/map-performance') {
+    const viewerAssets: Record<string, string> = {
+      '/viewer/index.js': 'text/javascript', '/viewer/worker.js': 'text/javascript',
+      '/viewer/textures/1.21.4.png': 'image/png', '/viewer/blocksStates/1.21.4.json': 'application/json'
+    }
+    if (request.method === 'GET' && viewerAssets[request.url || '']) {
+      const gzip = /\bgzip\b/.test(request.headers['accept-encoding'] || '') && !request.url!.endsWith('.png')
+      const file = path.join(__dirname, 'ui', request.url!.slice(1) + (gzip ? '.gz' : ''))
+      response.setHeader('Content-Type', viewerAssets[request.url!])
+      response.setHeader('Vary', 'Accept-Encoding')
+      if (gzip) response.setHeader('Content-Encoding', 'gzip')
+      const stream = createReadStream(file)
+      stream.on('error', () => { if (!response.headersSent) { response.removeHeader('Content-Encoding'); reply(404, { error: 'Viewer asset unavailable' }) } else response.destroy() })
+      response.once('close', () => stream.destroy())
+      stream.pipe(response)
+    } else if (request.method === 'GET' && request.url === '/api/map-performance') {
       if (!metrics || Date.now() - metricsAt > 250) { metricsAt = Date.now(); metrics = mapRuntimeMetrics() }
       void metrics.then(result => reply(200, result)).catch(() => reply(500, { error: 'Runtime metrics unavailable' }))
     } else if (request.method === 'GET' && ['/api/map/tiles', '/api/map/tile'].includes(request.url?.split('?')[0] || '')) {
@@ -79,7 +95,7 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
         .then(result => reply(200, result))
         .catch(error => reply(error instanceof WorldError ? error.status : 500, { error: error instanceof WorldError ? error.message : 'Map failed' }))
     } else if (request.method === 'GET' && ['/', '/?measure=1'].includes(request.url || '')) {
-      response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'" })
+      response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; worker-src 'self'; img-src 'self' data:; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'" })
       const content = page.replace('const archiveEnabled = false;', `const archiveEnabled = ${Boolean(archive)};`)
         .replace('const placesEnabled = false;', `const placesEnabled = ${Boolean(places)};`)
         .replace('const skinEnabled = false;', `const skinEnabled = ${Boolean(skins)};`)
@@ -258,9 +274,11 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
   })
   server.requestTimeout = 10000
   server.headersTimeout = 10000
+  const closeViewer = createViewerStream(server, bot.state)
   return {
     server, broadcast,
     close: () => {
+      closeViewer()
       for (const response of streams) response.end()
       streams.clear()
       server.close()
@@ -272,7 +290,8 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
 
 /*
  * The UI lives in src/ui/ (copied to dist/ui/ by `pnpm build`) and is read once at startup.
- * Style and script stay inline: the CSP allows only inline code, and tests extract the first <script> block.
+ * The main style/script stay inline; the optional 3D bundle and workers load from local allowlisted routes.
+ * Tests extract the first inline <script> block.
  * Function replacements avoid `$` patterns in the script being interpreted by String.replace.
  */
 const ui = (name: string) => readFileSync(path.join(__dirname, 'ui', name), 'utf8')

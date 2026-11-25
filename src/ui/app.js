@@ -1,5 +1,52 @@
 /* Extracted from web.ts, adapted to the redesigned layout. */
 const byId = id => document.getElementById(id);
+let botViewer = null;
+let viewerLoad = null;
+let viewerGeneration = 0;
+let viewerAbort = null;
+function loadViewerBundle () {
+  if (window.createBotViewer) return Promise.resolve();
+  if (!viewerLoad) viewerLoad = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = '/viewer/index.js';
+    script.onload = resolve;
+    script.onerror = () => { viewerLoad = null; script.remove(); reject(new Error('3D-Bundle konnte nicht geladen werden.')); };
+    document.head.append(script);
+  });
+  return viewerLoad;
+}
+byId('world-view').onchange = async () => {
+  const generation = ++viewerGeneration;
+  viewerAbort?.abort(); viewerAbort = null;
+  botViewer?.dispose(); botViewer = null;
+  const active = byId('world-view').value === '3d';
+  byId('viewer-panel').hidden = !active;
+  byId('viewer-controls').hidden = !active;
+  document.querySelector('.map-stage').hidden = active;
+  document.querySelector('.map-meta').hidden = active;
+  if (!active) return;
+  const abort = viewerAbort = new AbortController();
+  byId('viewer-status').textContent = '3D lädt …';
+  const report = (message, failed = false) => {
+    if (generation !== viewerGeneration) return;
+    byId('viewer-status').textContent = message;
+    if (failed) {
+      byId('world-view').value = 'map';
+      byId('world-view').onchange();
+      byId('feedback').textContent = message;
+    }
+  };
+  try {
+    await loadViewerBundle();
+    if (generation !== viewerGeneration) return;
+    const instance = await window.createBotViewer(byId('viewer-canvas'), report, abort.signal);
+    if (generation !== viewerGeneration) { instance.dispose(); return; }
+    botViewer = instance;
+    botViewer.setMode(byId('viewer-camera').value);
+  } catch (error) { report('3D nicht verfügbar: ' + error.message, true); }
+};
+byId('viewer-camera').onchange = () => botViewer?.setMode(byId('viewer-camera').value);
+byId('viewer-home').onclick = () => botViewer?.home();
 const archiveEnabled = false;
 // Saved places, navigation history and map pins.
 const placesEnabled = false;

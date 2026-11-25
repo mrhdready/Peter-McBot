@@ -247,12 +247,14 @@ export class BotController {
       client.on('error', (error: Error) => { if (active()) this.failed(error.message) })
       client.on('kick', (packet: { message?: string }) => { if (active()) this.failed(packet.message || 'Server kick') })
       client.on('close', () => { if (active()) this.failed('Connection closed') })
-      client.on('start_game', (packet: { entity_id?: bigint | string; player_position: Position; dimension: number | string; block_network_ids_are_hashes?: boolean; current_tick?: bigint }) => {
+      client.on('start_game', (packet: { entity_id?: bigint | string; player_position: Position; rotation?: { x: number; z: number }; dimension: number | string; block_network_ids_are_hashes?: boolean; current_tick?: bigint }) => {
         if (!active()) return
         if (packet.entity_id !== undefined) selfUniqueId = String(packet.entity_id)
         if (typeof packet.block_network_ids_are_hashes === 'boolean') this.state.beginWorld(packet.dimension, packet.block_network_ids_are_hashes)
         if (typeof packet.current_tick === 'bigint') this.navigator.synchroniseTick(packet.current_tick)
         this.updatePosition(packet.player_position)
+        if (Number.isFinite(packet.rotation?.x)) this.state.pitch = packet.rotation!.x
+        if (Number.isFinite(packet.rotation?.z)) this.state.yaw = packet.rotation!.z
         this.state.dimension = packet.dimension
       })
       client.on('level_chunk', packet => { if (active()) this.state.receiveColumn(packet) })
@@ -282,10 +284,12 @@ export class BotController {
         client.queue('respawn', { position: packet.position, state: 2, runtime_entity_id: client.entityId })
         finishLoading()
       })
-      client.on('move_player', (packet: { runtime_id: bigint | string; position: Position; mode?: string | number }) => {
+      client.on('move_player', (packet: { runtime_id: bigint | string; position: Position; yaw?: number; pitch?: number; mode?: string | number }) => {
         if (!active()) return
         if (String(packet.runtime_id) === String(client.entityId)) {
           this.updatePosition(packet.position)
+          if (Number.isFinite(packet.yaw)) this.state.yaw = packet.yaw!
+          if (Number.isFinite(packet.pitch)) this.state.pitch = packet.pitch!
           if (packet.mode === 'teleport' || packet.mode === 'reset' || packet.mode === 1 || packet.mode === 2) this.navigator.acknowledgeTeleport()
         } else this.movePlayer(packet.runtime_id, packet.position)
       })

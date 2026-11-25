@@ -1,0 +1,152 @@
+--- a/viewer/lib/worldrenderer.js
++++ b/viewer/lib/worldrenderer.js
+@@ -13,6 +13,7 @@
+   constructor (scene, numWorkers = 4) {
+     this.sectionMeshs = {}
+     this.active = false
++    this.generation = 0
+     this.version = undefined
+     this.scene = scene
+     this.loadedChunks = {}
+@@ -27,11 +28,12 @@
+     for (let i = 0; i < numWorkers; i++) {
+       // Node environement needs an absolute path, but browser needs the url of the file
+       let src = __dirname
+-      if (typeof window !== 'undefined') src = 'worker.js'
++      if (typeof window !== 'undefined') src = '/viewer/worker.js'
+       else src += '/worker.js'
+ 
+       const worker = new Worker(src)
+       worker.onmessage = ({ data }) => {
++        if (data.generation !== this.generation) return
+         if (data.type === 'geometry') {
+           let mesh = this.sectionMeshs[data.key]
+           if (mesh) {
+@@ -65,13 +67,17 @@
+   }
+ 
+   resetWorld () {
++    this.generation++
+     this.active = false
+     for (const mesh of Object.values(this.sectionMeshs)) {
+       this.scene.remove(mesh)
++      dispose3(mesh)
+     }
++    this.loadedChunks = {}
++    this.sectionsOutstanding.clear()
+     this.sectionMeshs = {}
+     for (const worker of this.workers) {
+-      worker.postMessage({ type: 'reset' })
++      worker.postMessage({ type: 'reset', generation: this.generation })
+     }
+   }
+ 
+@@ -87,7 +93,7 @@
+   }
+ 
+   updateTexturesData () {
+-    loadTexture(this.texturesDataUrl || `textures/${this.version}.png`, texture => {
++    loadTexture(this.texturesDataUrl || `/viewer/textures/${this.version}.png`, texture => {
+       texture.magFilter = THREE.NearestFilter
+       texture.minFilter = THREE.NearestFilter
+       texture.flipY = false
+@@ -97,7 +103,7 @@
+     const loadBlockStates = () => {
+       return new Promise(resolve => {
+         if (this.blockStatesData) return resolve(this.blockStatesData)
+-        return loadJSON(`blocksStates/${this.version}.json`, resolve)
++        return loadJSON(`/viewer/blocksStates/${this.version}.json`, resolve)
+       })
+     }
+     loadBlockStates().then((blockStates) => {
+@@ -112,7 +118,7 @@
+     for (const worker of this.workers) {
+       worker.postMessage({ type: 'chunk', x, z, chunk })
+     }
+-    for (let y = 0; y < 256; y += 16) {
++    for (let y = -64; y < 320; y += 16) {
+       const loc = new Vec3(x, y, z)
+       this.setSectionDirty(loc)
+       this.setSectionDirty(loc.offset(-16, 0, 0))
+@@ -127,7 +133,7 @@
+     for (const worker of this.workers) {
+       worker.postMessage({ type: 'unloadChunk', x, z })
+     }
+-    for (let y = 0; y < 256; y += 16) {
++    for (let y = -64; y < 320; y += 16) {
+       this.setSectionDirty(new Vec3(x, y, z), false)
+       const key = `${x},${y},${z}`
+       const mesh = this.sectionMeshs[key]
+--- a/viewer/lib/worker.js
++++ b/viewer/lib/worker.js
+@@ -16,6 +16,7 @@
+ 
+ let blocksStates = null
+ let world = null
++let generation = 0
+ 
+ function sectionKey (x, y, z) {
+   return `${x},${y},${z}`
+@@ -31,11 +32,11 @@
+   const key = sectionKey(x, y, z)
+   if (!value) {
+     delete dirtySections[key]
+-    postMessage({ type: 'sectionFinished', key })
+-  } else if (chunk && chunk.sections[Math.floor(y / 16)]) {
++    postMessage({ type: 'sectionFinished', key, generation })
++  } else if (chunk && chunk.sections[Math.floor((y - chunk.minY) / 16)]) {
+     dirtySections[key] = value
+   } else {
+-    postMessage({ type: 'sectionFinished', key })
++    postMessage({ type: 'sectionFinished', key, generation })
+   }
+ }
+ 
+@@ -55,8 +56,10 @@
+     const loc = new Vec3(data.pos.x, data.pos.y, data.pos.z).floored()
+     world.setBlockStateId(loc, data.stateId)
+   } else if (data.type === 'reset') {
++    generation = data.generation
+     world = null
+     blocksStates = null
++    for (const key of Object.keys(dirtySections)) delete dirtySections[key]
+   }
+ }
+ 
+@@ -74,13 +77,13 @@
+     y = parseInt(y, 10)
+     z = parseInt(z, 10)
+     const chunk = world.getColumn(x, z)
+-    if (chunk && chunk.sections[Math.floor(y / 16)]) {
++    if (chunk && chunk.sections[Math.floor((y - chunk.minY) / 16)]) {
+       delete dirtySections[key]
+       const geometry = getSectionGeometry(x, y, z, world, blocksStates)
+       const transferable = [geometry.positions.buffer, geometry.normals.buffer, geometry.colors.buffer, geometry.uvs.buffer]
+-      postMessage({ type: 'geometry', key, geometry }, transferable)
++      postMessage({ type: 'geometry', key, geometry, generation }, transferable)
+     }
+-    postMessage({ type: 'sectionFinished', key })
++    postMessage({ type: 'sectionFinished', key, generation })
+   }
+   // const time = performance.now() - start
+   // console.log(`Processed ${sections.length} sections in ${time} ms (${time / sections.length} ms/section)`)
+--- a/viewer/lib/models.js
++++ b/viewer/lib/models.js
+@@ -130,7 +130,7 @@
+     if (!neighbor) continue
+     if (neighbor.type === type) continue
+     if ((neighbor.isCube && !isUp) || neighbor.material === 'plant' || neighbor.getProperties().waterlogged) continue
+-    if (neighbor.position.y < 0) continue
++    if (neighbor.position.y < -64) continue
+ 
+     let tint = [1, 1, 1]
+     if (water) {
+@@ -241,7 +241,7 @@
+       if (!neighbor) continue
+       if (cullIfIdentical && neighbor.type === block.type) continue
+       if (!neighbor.transparent && neighbor.isCube) continue
+-      if (neighbor.position.y < 0) continue
++      if (neighbor.position.y < -64) continue
+     }
+ 
+     const minx = element.from[0]

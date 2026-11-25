@@ -440,6 +440,8 @@ export class Navigator {
   private sendInput (send: Send, position: Position, velocity: Position, input: number, grounded: boolean, jump = false,
     look: { pitch?: number; flags?: string[]; fields?: Record<string, unknown> } = {}) {
     const pitch = look.pitch ?? 0
+    this.world.yaw = this.yaw
+    this.world.pitch = pitch
     this.inputActive = input > 0
     const yaw = this.yaw * Math.PI / 180
     // A jump is a one-tick press; release on the next input prevents repeated jumps.

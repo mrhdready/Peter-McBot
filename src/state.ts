@@ -14,6 +14,8 @@ export type NavigationState = {
 export class WorldState extends ChunkWorld {
   status: Status = 'disconnected'
   position: Position | null = null
+  yaw = 0
+  pitch = 0
   positionSource: 'server' | 'predicted' = 'server'
   lastServerPosition: Position | null = null
   navigation: NavigationState = { status: 'idle', target: null, feetY: null, path: [], remaining: 0, replans: 0, corrections: 0, message: null }
@@ -29,6 +31,8 @@ export class WorldState extends ChunkWorld {
   // Dropped item entities the server reports near the bot, keyed by runtime entity ID; memory only.
   items = new Map<string, ItemEntity>()
   resetWorld () {
+    this.yaw = 0
+    this.pitch = 0
     this.position = null
     this.lastServerPosition = null
     this.positionSource = 'server'
