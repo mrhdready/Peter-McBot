@@ -2,6 +2,7 @@ import path from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { setImmediate as yieldLoop } from 'node:timers/promises'
 import { Terrain, type Box, type CollisionCell } from './terrain.js'
+import { estimateLight } from './light.js'
 
 type Position = { x: number; y: number; z: number }
 type Section = { data: Uint32Array | null }
@@ -10,7 +11,7 @@ export type WorldColumn = {
   x: number; z: number; announced: boolean; sections: Map<number, Section>;
   attempts: Map<number, number>; requests: Map<number, Request>
 }
-type BlockInfo = { min: number; max: number }
+type BlockInfo = { min: number; max: number; emission?: number; filter?: number }
 export type SurfaceCell = [string, number | null, boolean]
 export type SurfaceTile = { x: number; z: number; dimension: number; cells: Array<SurfaceCell | null> }
 type SurfaceMap = {
@@ -48,6 +49,8 @@ export class ChunkWorld {
   private worldDimension: number | null = null
   private blocks: Record<string, BlockInfo> | null = null
   private stateNames: string[] = []
+  private lightProperties: Array<{ emission: number; filter: number }> = []
+  private lightCache: { key: string; value: number | null } | null = null
   private walkFlags = new Uint8Array()
   private collisionIds = new Int32Array()
   private collisionShapes: Record<number, Box[]> = {}
@@ -90,6 +93,7 @@ export class ChunkWorld {
     this.jobs.clear()
     this.blocks = null
     this.stateNames = []
+    this.lightProperties = []; this.lightCache = null
     this.walkFlags = new Uint8Array()
     this.collisionIds = new Int32Array()
     this.collisionShapes = {}
@@ -128,7 +132,10 @@ export class ChunkWorld {
         this.cropGrowth = message.cropGrowth
         this.cropDirection = message.cropDirection
         for (const [name, block] of Object.entries(this.blocks!)) {
-          for (let id = block.min; id <= block.max; id++) this.stateNames[id] = name
+          for (let id = block.min; id <= block.max; id++) {
+            this.stateNames[id] = name
+            this.lightProperties[id] = { emission: block.emission ?? 0, filter: block.filter ?? 15 }
+          }
         }
         this.air = message.air
         const pairs = message.runtimePairs as Uint32Array
@@ -386,6 +393,37 @@ export class ChunkWorld {
   blockNameAt (x: number, y: number, z: number): string | null {
     const id = this.stateAt(x, y, z)
     return id === null ? null : this.stateNames[id] ?? null
+  }
+
+  estimatedLight (position: Position, sky: number): number | null {
+    if (this.worldDimension !== 0) return null
+    const key = [this.revision, Math.floor(position.x), Math.floor(position.y), Math.floor(position.z), sky].join(':')
+    if (this.lightCache?.key === key) return this.lightCache.value
+    const value = estimateLight(position, sky, this.minY * 16, this.maxY * 16 + 15, (x, y, z) => {
+      const state = this.stateAt(x, y, z)
+      const extra = this.stateAt(x, y, z, 1)
+      const a = state === null ? null : this.lightProperties[state]
+      const b = extra === null ? null : this.lightProperties[extra]
+      return !a || !b ? null : { emission: Math.max(a.emission, b.emission), filter: Math.max(a.filter, b.filter) }
+    })
+    this.lightCache = { key, value }
+    return value
+  }
+
+  stateIdAt (p: Position) { return this.stateAt(p.x, p.y, p.z) }
+
+  canSeeBlock (eye: Position, block: Position) {
+    const end = { x: block.x + .5, y: block.y + .5625, z: block.z + .5 }
+    const steps = Math.ceil(Math.hypot(end.x - eye.x, end.y - eye.y, end.z - eye.z) * 16)
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps
+      const p = { x: eye.x + (end.x - eye.x) * t, y: eye.y + (end.y - eye.y) * t, z: eye.z + (end.z - eye.z) * t }
+      const x = Math.floor(p.x); const y = Math.floor(p.y); const z = Math.floor(p.z)
+      if (x === block.x && y === block.y && z === block.z) continue
+      const cell = this.collisionAt(x, y, z)
+      if (!cell || cell.boxes.some(b => p.x > x + b[0] && p.x < x + b[3] && p.y > y + b[1] && p.y < y + b[4] && p.z > z + b[2] && p.z < z + b[5])) return false
+    }
+    return true
   }
 
   /** The crop at (x, y, z) and its growth 0..7, or null. `growth` is a crop's only state, so it is the offset in its state range. */

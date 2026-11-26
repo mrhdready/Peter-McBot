@@ -6,6 +6,8 @@
 <header class="topbar">
 <h1>Minecraft AFK-Bot <small class="build-version" title="Version"><!-- ui:version --></small></h1>
 <span class="badge" id="status" title="Verbindungsstatus">Lädt …</span>
+<span class="world-clock" id="world-clock" title="Ingame-Uhrzeit, 24-Stunden-Format">Uhrzeit unbekannt</span>
+<span class="world-light" id="world-light" title="Geschätztes lokales Licht am Bot (0–15)">Licht unbekannt</span>
 <button id="connection-toggle" type="button">Verbinden</button>
 <p id="feedback" role="status"></p>
 </header>
@@ -68,6 +70,11 @@
 </details>
 <details class="panel" open>
 <summary><h2 id="bot-heading">Bot</h2></summary>
+<div class="sleep-settings" role="group" aria-label="Schlafautomatik">
+<label class="farm-switch"><span>Automatisch schlafen</span><input id="sleep-enabled" type="checkbox" role="switch"><span class="switch-track" aria-hidden="true"></span></label>
+<label class="farm-switch sleep-subsetting"><span>Nur wenn andere Spieler schlafen wollen</span><input id="sleep-with-players" type="checkbox" role="switch" disabled><span class="switch-track" aria-hidden="true"></span></label>
+<p id="sleep-status" role="status">Automatisches Schlafen ist aus.</p><p id="sleep-feedback" role="status"></p>
+</div>
 <dl class="facts"><dt>Position</dt><dd id="position">Unbekannt</dd><dt>Dimension</dt><dd id="dimension">Unbekannt</dd><dt>Chunks</dt><dd id="chunks">0</dd><dt>Herzschlag</dt><dd id="tick">0</dd><dt>Letzter Fehler</dt><dd id="error">—</dd></dl>
 </details>
 <details class="panel" open>

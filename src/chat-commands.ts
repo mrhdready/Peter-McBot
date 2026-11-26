@@ -76,6 +76,7 @@ export class ChatCommands {
     this.lastCommand.set(sender, now)
     const [word = '', ...rest] = (match[1] ?? '').trim().split(/\s+/)
     const argument = rest.join(' ')
+    if (['go', 'come', 'give', 'put', 'get'].includes(word.toLowerCase())) this.bot.sleep.manualWork()
     try {
       switch (word.toLowerCase()) {
         case 'hallo': case 'hi': case 'hey': return this.say(`Hallo ${sender}!`)

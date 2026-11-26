@@ -75,6 +75,7 @@ export class Navigator {
   private openedDoors: Array<{ door: Position; entered: boolean }> = []
 
   constructor (private world: WorldState) {}
+  get settlingMotion () { return this.settling || this.neutral }
 
   reset () {
     this.world.navigation.path = []; this.planner = null
@@ -88,26 +89,40 @@ export class Navigator {
   acknowledgeTeleport () { this.teleportPending = true }
   synchroniseTick (tick: bigint) { this.tickBase = tick - BigInt(this.world.tick); this.tick = tick }
 
+  private settleFromRest () {
+    const p = this.world.position
+    if (this.world.status !== 'spawned' || !p || this.world.canStandAt(p.x, p.z, p.y - EYE_HEIGHT)) return false
+    const feet = { ...p, y: p.y - EYE_HEIGHT }
+    // Wake positions can be above the floor; use collision-checked gravity instead of snapping to a surface.
+    if (!this.world.terrain.move(feet, 0, 0, -.0784, false, feet.y)) return false
+    this.session = this.world.worldSession
+    this.velocity = { x: 0, z: 0 }; this.velocityY = -.0784; this.grounded = false
+    this.fallFrom = feet.y; this.settling = true; this.jumping = false
+    return true
+  }
+
   start (target: Target, now: number) {
     this.stop()
     this.world.navigation = { status: 'planning', target: { ...target }, feetY: null, path: [], remaining: 0, replans: 0, corrections: 0, message: null }
     const p = this.world.position
     if (this.world.status !== 'spawned' || !p) return this.fail('Bot ist nicht verbunden und gespawnt.')
     if (![target.x, target.z].every(n => Number.isInteger(n) && Math.abs(n) <= 30000000)) return this.fail('X und Z müssen ganzzahlige Blockkoordinaten sein.')
-    const feetY = this.world.terrain.surfaceAt(p.x, p.z, p.y - EYE_HEIGHT + .08, p.y - EYE_HEIGHT - .08)
-    if (feetY === null) {
+    const supported = this.world.canStandAt(p.x, p.z, p.y - EYE_HEIGHT)
+    if (!supported && !this.settleFromRest()) {
       this.fail('Startposition hat keine bekannte, sichere Standfläche mit ausreichend Freiraum.')
       this.settling = false; this.neutral = false
       return
     }
-    this.world.navigation.feetY = feetY
-    this.grounded = true; this.velocityY = -.0784; this.fallFrom = feetY; this.settling = false
+    this.world.navigation.feetY = p.y - EYE_HEIGHT
+    if (supported) {
+      this.grounded = true; this.velocityY = -.0784; this.fallFrom = p.y - EYE_HEIGHT; this.settling = false
+    }
     if (!this.world.chunks.has(Math.floor(target.x / 16) + ':' + Math.floor(target.z / 16))) return this.fail('Ziel liegt außerhalb der geladenen Chunks.')
     this.session = this.world.worldSession
     this.startedAt = now; this.progressAt = now
     this.stalledReplans = 0; this.waitingSince = null
     this.world.blockedDoors.clear()
-    this.plan()
+    if (!this.settling) this.plan()
   }
 
   stop (message = 'Navigation gestoppt.') {
@@ -325,7 +340,8 @@ export class Navigator {
   }
 
   step (send: Send, now: number) {
-    if (this.teleportPending && ['planning', 'moving'].includes(this.world.navigation.status) && this.world.position) {
+    if (!this.settling && !['planning', 'moving'].includes(this.world.navigation.status)) this.settleFromRest()
+    if (this.teleportPending && !this.settling && ['planning', 'moving'].includes(this.world.navigation.status) && this.world.position) {
       this.sendInput(send, this.world.position, { x: 0, y: -.0784, z: 0 }, 0, true)
       return
     }

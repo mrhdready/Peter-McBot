@@ -17,7 +17,7 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
   let mapClients = 0
   let metrics: ReturnType<typeof mapRuntimeMetrics> | null = null
   let metricsAt = 0
-  const snapshot = () => JSON.stringify({ ...bot.state.snapshot(), chatRevision: bot.chatRevision, inventoryRevision: bot.state.inventory.revision, farm: bot.farm.status(), collector: bot.collector.status(), ...(places ? { placesRevision: places.revision } : {}), ...(skins ? { skin: skins.status() } : {}) })
+  const snapshot = () => JSON.stringify({ ...bot.state.snapshot(), environment: bot.environment(), sleep: bot.sleep.status(), chatRevision: bot.chatRevision, inventoryRevision: bot.state.inventory.revision, farm: bot.farm.status(), collector: bot.collector.status(), ...(places ? { placesRevision: places.revision } : {}), ...(skins ? { skin: skins.status() } : {}) })
   const broadcast = () => {
     const data = `data: ${snapshot()}\n\n`
     for (const response of streams) {
@@ -101,7 +101,7 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
         .replace('const skinEnabled = false;', `const skinEnabled = ${Boolean(skins)};`)
       response.end(request.url === '/?measure=1' ? content.replace('</html>', mapPerformancePanel + '</html>') : content)
     } else if (request.method === 'GET' && request.url === '/api/status') {
-      reply(200, { ...bot.state.snapshot(), farm: bot.farm.status(), collector: bot.collector.status() })
+      reply(200, { ...bot.state.snapshot(), environment: bot.environment(), sleep: bot.sleep.status(), farm: bot.farm.status(), collector: bot.collector.status() })
     } else if (request.method === 'GET' && request.url === '/api/chat') {
       reply(200, bot.chatLog())
     } else if (request.method === 'GET' && request.url === '/api/inventory') {
@@ -182,7 +182,7 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
       })
       request.on('error', () => reply(400, { error: 'Incomplete request' }))
     // Farming on (around the bot or a saved place of the current dimension) or off.
-    } else if (request.method === 'POST' && ['/api/farm', '/api/collector'].includes(request.url || '')) {
+    } else if (request.method === 'POST' && ['/api/farm', '/api/collector', '/api/sleep'].includes(request.url || '')) {
       if (request.headers.origin && request.headers.origin !== `http://${request.headers.host}` && request.headers.origin !== `https://${request.headers.host}`) return reply(403, { error: 'Foreign origin rejected' })
       if (request.headers['content-type'] !== 'application/json') return reply(415, { error: 'Use application/json' })
       const collecting = request.url === '/api/collector'
@@ -200,6 +200,10 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
         if (rejected) return
         let body: Record<string, unknown>
         try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch { return reply(400, { error: 'Invalid JSON' }) }
+        if (request.url === '/api/sleep') {
+          try { bot.sleep.configure(body); broadcast(); return reply(202, { sleep: bot.sleep.status() }) }
+          catch (error) { return reply(error instanceof WorldError ? error.status : 500, { error: error instanceof Error ? error.message : 'Sleep settings could not be saved' }) }
+        }
         if (!body || typeof body !== 'object' || Array.isArray(body) || !(collecting ? ['on', 'off'] : ['on', 'off', 'settings']).includes(body.action as string) ||
           (body.place !== undefined && body.place !== null && typeof body.place !== 'string')) return reply(400, { error: collecting ? 'Provide action "on" or "off" and an optional place id' : 'Provide action "on", "off" or "settings" and an optional place id' })
         if (!collecting && body.action === 'settings') {

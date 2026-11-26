@@ -1,0 +1,319 @@
+{
+  "dataVersion": "1.26.60",
+  "description": "Anonymized live enter/leave sequence; initial state is already in bed. Only sleep-related metadata retained. Named extended flags show the installed schema error.",
+  "frames": [
+    {
+      "packet": "add_player",
+      "metadata": [
+        {
+          "key": "player_flags",
+          "type": "byte",
+          "legacy_type": 0,
+          "value": 2
+        },
+        {
+          "key": "boundingbox_width",
+          "type": "float",
+          "legacy_type": 3,
+          "value": 0.20000000298023224
+        },
+        {
+          "key": "boundingbox_height",
+          "type": "float",
+          "legacy_type": 3,
+          "value": 0.20000000298023224
+        },
+        {
+          "key": "flags_extended",
+          "type": "long",
+          "legacy_type": 7,
+          "value": {
+            "_value": "35184405647872",
+            "sleeping": false,
+            "wants_to_wake": true
+          }
+        }
+      ]
+    },
+    {
+      "packet": "set_entity_data",
+      "metadata": [
+        {
+          "key": "player_flags",
+          "type": "byte",
+          "legacy_type": 0,
+          "value": 0
+        },
+        {
+          "key": "flags_extended",
+          "type": "long",
+          "legacy_type": 7,
+          "value": {
+            "_value": "35184405643776",
+            "sleeping": false,
+            "wants_to_wake": false
+          }
+        }
+      ],
+      "tick": "35894"
+    },
+    {
+      "packet": "set_entity_data",
+      "metadata": [
+        {
+          "key": "boundingbox_width",
+          "type": "float",
+          "legacy_type": 3,
+          "value": 0.6000000238418579
+        },
+        {
+          "key": "boundingbox_height",
+          "type": "float",
+          "legacy_type": 3,
+          "value": 1.7999999523162842
+        }
+      ],
+      "tick": "35895"
+    },
+    {
+      "packet": "set_entity_data",
+      "metadata": [
+        {
+          "key": "player_flags",
+          "type": "byte",
+          "legacy_type": 0,
+          "value": 2
+        },
+        {
+          "key": "flags_extended",
+          "type": "long",
+          "legacy_type": 7,
+          "value": {
+            "_value": "35184405647872",
+            "sleeping": false,
+            "wants_to_wake": true
+          }
+        }
+      ],
+      "tick": "35941"
+    },
+    {
+      "packet": "set_entity_data",
+      "metadata": [
+        {
+          "key": "boundingbox_width",
+          "type": "float",
+          "legacy_type": 3,
+          "value": 0.20000000298023224
+        },
+        {
+          "key": "boundingbox_height",
+          "type": "float",
+          "legacy_type": 3,
+          "value": 0.20000000298023224
+        }
+      ],
+      "tick": "35942"
+    },
+    {
+      "packet": "set_entity_data",
+      "metadata": [
+        {
+          "key": "player_flags",
+          "type": "byte",
+          "legacy_type": 0,
+          "value": 0
+        },
+        {
+          "key": "flags_extended",
+          "type": "long",
+          "legacy_type": 7,
+          "value": {
+            "_value": "35184405643776",
+            "sleeping": false,
+            "wants_to_wake": false
+          }
+        }
+      ],
+      "tick": "36046"
+    },
+    {
+      "packet": "set_entity_data",
+      "metadata": [
+        {
+          "key": "boundingbox_width",
+          "type": "float",
+          "legacy_type": 3,
+          "value": 0.6000000238418579
+        },
+        {
+          "key": "boundingbox_height",
+          "type": "float",
+          "legacy_type": 3,
+          "value": 1.7999999523162842
+        }
+      ],
+      "tick": "36047"
+    },
+    {
+      "packet": "set_entity_data",
+      "metadata": [
+        {
+          "key": "player_flags",
+          "type": "byte",
+          "legacy_type": 0,
+          "value": 2
+        },
+        {
+          "key": "flags_extended",
+          "type": "long",
+          "legacy_type": 7,
+          "value": {
+            "_value": "35184405647872",
+            "sleeping": false,
+            "wants_to_wake": true
+          }
+        }
+      ],
+      "tick": "36079"
+    },
+    {
+      "packet": "set_entity_data",
+      "metadata": [
+        {
+          "key": "boundingbox_width",
+          "type": "float",
+          "legacy_type": 3,
+          "value": 0.20000000298023224
+        },
+        {
+          "key": "boundingbox_height",
+          "type": "float",
+          "legacy_type": 3,
+          "value": 0.20000000298023224
+        }
+      ],
+      "tick": "36080"
+    },
+    {
+      "packet": "set_entity_data",
+      "metadata": [
+        {
+          "key": "player_flags",
+          "type": "byte",
+          "legacy_type": 0,
+          "value": 0
+        },
+        {
+          "key": "flags_extended",
+          "type": "long",
+          "legacy_type": 7,
+          "value": {
+            "_value": "35184405643776",
+            "sleeping": false,
+            "wants_to_wake": false
+          }
+        }
+      ],
+      "tick": "36188"
+    },
+    {
+      "packet": "set_entity_data",
+      "metadata": [
+        {
+          "key": "boundingbox_width",
+          "type": "float",
+          "legacy_type": 3,
+          "value": 0.6000000238418579
+        },
+        {
+          "key": "boundingbox_height",
+          "type": "float",
+          "legacy_type": 3,
+          "value": 1.7999999523162842
+        }
+      ],
+      "tick": "36189"
+    },
+    {
+      "packet": "set_entity_data",
+      "metadata": [
+        {
+          "key": "player_flags",
+          "type": "byte",
+          "legacy_type": 0,
+          "value": 2
+        },
+        {
+          "key": "flags_extended",
+          "type": "long",
+          "legacy_type": 7,
+          "value": {
+            "_value": "35184405647872",
+            "sleeping": false,
+            "wants_to_wake": true
+          }
+        }
+      ],
+      "tick": "36348"
+    },
+    {
+      "packet": "set_entity_data",
+      "metadata": [
+        {
+          "key": "boundingbox_width",
+          "type": "float",
+          "legacy_type": 3,
+          "value": 0.20000000298023224
+        },
+        {
+          "key": "boundingbox_height",
+          "type": "float",
+          "legacy_type": 3,
+          "value": 0.20000000298023224
+        }
+      ],
+      "tick": "36349"
+    },
+    {
+      "packet": "set_entity_data",
+      "metadata": [
+        {
+          "key": "player_flags",
+          "type": "byte",
+          "legacy_type": 0,
+          "value": 0
+        },
+        {
+          "key": "flags_extended",
+          "type": "long",
+          "legacy_type": 7,
+          "value": {
+            "_value": "35184405643776",
+            "sleeping": false,
+            "wants_to_wake": false
+          }
+        }
+      ],
+      "tick": "36480"
+    },
+    {
+      "packet": "set_entity_data",
+      "metadata": [
+        {
+          "key": "boundingbox_width",
+          "type": "float",
+          "legacy_type": 3,
+          "value": 0.6000000238418579
+        },
+        {
+          "key": "boundingbox_height",
+          "type": "float",
+          "legacy_type": 3,
+          "value": 1.7999999523162842
+        }
+      ],
+      "tick": "36481"
+    }
+  ]
+}

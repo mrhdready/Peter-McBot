@@ -53,6 +53,70 @@ test('preview uses the real planner on the heartbeat without moving or changing 
   await assert.rejects(bot.previewRoute({x:3,z:0}),/Stop navigation/)
 })
 
+test('known beds support stepping off after waking and the worker provides local light properties', async t => {
+  const { world, navigator, step } = await setup(t)
+  assert.equal(world.estimatedLight(world.position, 15), 15)
+  world.updateBlock({ x: 0, y: 71, z: 0 }, hash('bed'))
+  assert.equal(world.canStandAt(.5, .5, 71 + .5625), true)
+  world.position = { x: .5, y: 71 + .5625 + EYE_HEIGHT, z: .5 }
+  navigator.start({ x: 2, z: 0 }, 0)
+  for (let i = 0; i < 200 && ['moving', 'planning'].includes(world.navigation.status); i++) step()
+  assert.equal(world.navigation.status, 'arrived', world.navigation.message)
+})
+
+test('idle wake positions settle vertically before navigation can start', async t => {
+  const { world, navigator, step, sent } = await setup(t)
+  navigator.serverCorrection({ x: .5, y: 71.29 + EYE_HEIGHT, z: .5 })
+  navigator.acknowledgeTeleport()
+  const serverPosition = { ...world.position }
+  for (let i = 0; i < 10; i++) step()
+  assert.equal(world.navigation.status, 'idle')
+  assert.ok(Math.abs(world.position.y - (71 + EYE_HEIGHT)) < .0001)
+  assert.deepEqual(world.lastServerPosition, serverPosition)
+  assert.ok(sent.length > 1)
+  assert.ok(sent.every(p => p.params.move_vector.z === 0 && p.params.position.x === .5 && p.params.position.z === .5))
+  assert.ok(sent[0].params.input_data.includes('handled_teleport'))
+  assert.ok(!sent[0].params.input_data.includes('vertical_collision'))
+  const count = sent.length
+  step(); step()
+  assert.equal(sent.length, count, 'Landing returns to rest')
+  navigator.start({ x: 2, z: 0 }, 1000)
+  for (let i = 0; i < 200 && ['planning', 'moving'].includes(world.navigation.status); i++) step()
+  assert.equal(world.navigation.status, 'arrived', world.navigation.message)
+})
+
+test('navigation requested in the air lands before planning without changing preview positions', async t => {
+  const { world, navigator, step, sent } = await setup(t)
+  world.position.y += .29
+  const before = { ...world.position }
+  assert.throws(() => new (require('../dist/pathfinder.js').RoutePlanner)(world, world.position, { x: 2, z: 0 }), /Startposition/)
+  assert.deepEqual(world.position, before)
+  navigator.start({ x: 2, z: 0 }, 0)
+  assert.equal(world.navigation.status, 'planning')
+  for (let i = 0; i < 200 && ['planning', 'moving'].includes(world.navigation.status); i++) step()
+  assert.equal(world.navigation.status, 'arrived', world.navigation.message)
+  assert.equal(sent[0].params.move_vector.z, 0)
+  assert.ok(sent[0].params.position.y < before.y)
+})
+
+test('idle gravity lands after support removal but refuses deep or unknown drops', async t => {
+  const { world, step, sent } = await setup(t)
+  world.updateBlock({ x: 0, y: 70, z: 0 }, hash('air'))
+  world.updateBlock({ x: 0, y: 69, z: 0 }, hash('stone'))
+  for (let i = 0; i < 15; i++) step()
+  assert.ok(Math.abs(world.position.y - (70 + EYE_HEIGHT)) < .0001)
+  world.updateBlock({ x: 0, y: 69, z: 0 }, hash('air'))
+  world.updateBlock({ x: 0, y: 67, z: 0 }, hash('stone'))
+  const before = { ...world.position }; const count = sent.length
+  for (let i = 0; i < 15; i++) step()
+  assert.deepEqual(world.position, before)
+  assert.equal(sent.length, count)
+  world.clearChunks()
+  step()
+  assert.deepEqual(world.position, before)
+  assert.equal(sent.length, count)
+})
+
 test('central route snapshots shrink with movement and clear on replan, stop and session change', async t => {
   const {world,navigator,step}=await setup(t)
   navigator.start({x:4,z:0},0)

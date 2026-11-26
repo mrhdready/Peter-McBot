@@ -81,6 +81,22 @@ type Wait = { done: () => boolean; until: number; each?: (send: Send) => void; r
 type Tally = { harvested: Record<CropKind, number>; planted: number; unplanted: number }
 
 export class Farmer {
+  private sleepPausedAt: number | null = null
+  private pendingReplants = new Map<string, Spot>()
+
+  suspendForSleep (pause: boolean) {
+    if (pause && this.sleepPausedAt === null) {
+      this.sleepPausedAt = this.host.now()
+      for (const spot of this.pendingReplants.values()) {
+        if (!this.unplanted.some(p => p.x === spot.x && p.y === spot.y && p.z === spot.z)) this.unplanted.push({ ...spot })
+      }
+      this.cancel()
+    } else if (!pause && this.sleepPausedAt !== null) {
+      this.sleepPausedAt = null; this.nextScanAt = 0; this.equipped = null
+    }
+  }
+
+  get inventoryBusy () { return this.inventoryOpening || this.inventoryWindow !== null }
   /** Chat output: on/off, problems and one summary per round. Without chat commands it only goes to the log. */
   onReport: (text: string) => void = () => {}
   private enabled = false
@@ -184,6 +200,7 @@ export class Farmer {
     if (!this.inventoryOpening || (windowType !== 'inventory' && windowType !== -1)) return
     this.inventoryWindow = { windowId, windowType }
     this.inventoryOpening = false
+    if (this.sleepPausedAt !== null) this.inventoryClosing = true
   }
 
   inventoryClosed (windowId: string | number) {
@@ -197,6 +214,7 @@ export class Farmer {
     const paused = this.enabled && now < this.pausedUntil
     let activity = this.activity
     if (!this.enabled) activity = 'Aus'
+    else if (this.sleepPausedAt !== null) activity = 'Pausiert (Schlafen)'
     else if (paused) activity = 'Pausiert (Chat-Befehl)'
     else if (this.host.state.status !== 'spawned') activity = 'Wartet auf Verbindung'
     return { enabled: this.enabled, once: this.once, anchor: this.anchor && { ...this.anchor }, radius: this.radius, activity,
@@ -211,6 +229,7 @@ export class Farmer {
       this.inventoryClosing = false
       send('container_close', { window_id: windowId, window_type: windowType, server: false })
     }
+    if (this.sleepPausedAt !== null) return
     if (this.haltNavigation) { this.haltNavigation = false; this.host.stopNavigation() }
     if (!this.enabled) return
     const now = this.host.now()
@@ -225,6 +244,7 @@ export class Farmer {
         this.problem('error:' + message, 'Farming-Fehler: ' + message)
       }).finally(() => {
         if (this.token !== token) return
+        this.pendingReplants.clear()
         this.running = false
         this.nextScanAt = this.host.now() + SCAN_MS
         if (this.once && this.enabled && !this.returnBlocked) this.off('ein Durchgang erledigt')
@@ -239,6 +259,7 @@ export class Farmer {
   }
 
   private cancel () {
+    this.pendingReplants.clear()
     this.inventoryClosing = true
     this.token++
     this.running = false
@@ -373,7 +394,9 @@ export class Farmer {
       if (crop.kind === 'cocoa') crop.direction = current.direction
       const centre = { x: crop.x + .5, y: crop.y + .5, z: crop.z + .5 }
       if (this.eyeDistance(centre) > REACH) { log(`(${crop.x}, ${crop.y}, ${crop.z}) außer Reichweite.`); continue }
-      if (!(await this.harvest(crop, centre))) continue
+      const pendingKey = `${crop.x}:${crop.y}:${crop.z}`
+      if (CROPS[crop.kind]) this.pendingReplants.set(pendingKey, { ...crop })
+      if (!(await this.harvest(crop, centre))) { this.pendingReplants.delete(pendingKey); continue }
       harvested.push(crop)
       tally.harvested[crop.kind]++
       if (crop.kind === 'cocoa') {
@@ -504,6 +527,7 @@ export class Farmer {
   // Replants harvested spots with the same crop, cluster by cluster; spots without seed are kept for later.
   private async plantAll (spots: Spot[], tally: Tally) {
     let remaining = spots.filter(spot => this.plantable(spot))
+    for (const spot of remaining) this.pendingReplants.set(`${spot.x}:${spot.y}:${spot.z}`, { ...spot })
     while (remaining.length) {
       const choice = this.standFor(remaining)
       remaining = remaining.filter(spot => !choice.members.includes(spot))
@@ -514,6 +538,7 @@ export class Farmer {
         const result = await this.plant(spot)
         if (result === 'planted') tally.planted++
         else { this.unplanted.push(spot); tally.unplanted++ }
+        this.pendingReplants.delete(`${spot.x}:${spot.y}:${spot.z}`)
       }
     }
   }

@@ -137,6 +137,8 @@ Unbekannte oder gefährliche Flächen sind nicht begehbar. Keine Lückensprünge
 
 ## Weitere Dokumentation
 
+- [Uhrzeit, lokale Lichtschätzung und Schlafautomatik](docs/SCHLAFAUTOMATIK.md)
+- [Smoke-Test für nahe und entfernte Schlafsignale](docs/SCHLAF-SMOKE.md)
 - [Architektur und Schnittstellen](docs/ARCHITEKTUR.md)
 - [Persistente Karte, Nebel und Übersicht](docs/KARTE.md)
 - [Kartenperformance und Messmodus](docs/KARTENPERFORMANCE.md)

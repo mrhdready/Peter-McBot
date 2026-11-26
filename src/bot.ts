@@ -7,6 +7,8 @@ import { WorldError } from './world.js'
 import type { ContainerWindow, Inventory, TransferStep } from './inventory.js'
 import { Collector } from './collector.js'
 import { Farmer } from './farming.js'
+import { WorldConditions } from './world-conditions.js'
+import { AutoSleeper } from './sleep.js'
 
 export interface BotClient extends EventEmitter {
   queue(name: string, params: unknown): void
@@ -49,6 +51,10 @@ export class BotController {
   /** The farming mode; it lives with the bot so the web UI can switch it without chat commands. */
   readonly farm: Farmer
   readonly collector: Collector
+  readonly conditions = new WorldConditions()
+  readonly sleep: AutoSleeper
+  private suspendedRun: { target: Target; origin: NavigationOrigin | null; session: number } | null = null
+  private deferredChest: Array<{ run: () => void; reject: (error: Error) => void }> = []
   private navigator: Navigator
   private commands: Command[] = []
   private client: BotClient | null = null
@@ -85,7 +91,7 @@ export class BotController {
       get state () { return bot.state }, get navigator () { return bot.navigator }, reach: config.radius * 16,
       now: () => this.now(),
       enqueue: command => this.enqueue(command),
-      activate: () => this.collector.off('Farming gestartet'),
+      activate: () => { this.sleep?.manualWork(); this.collector.off('Farming gestartet') },
       entityId: () => this.client?.entityId,
       useChest: (chest, next) => this.useChest(chest, next),
       cancelChest: () => this.cancelChest(),
@@ -99,13 +105,34 @@ export class BotController {
     this.collector = new Collector({
       get state () { return bot.state }, get navigator () { return bot.navigator }, reach: config.radius * 16,
       now: () => this.now(), enqueue: command => this.enqueue(command),
-      activate: () => { this.farm.off('Collector gestartet'); this.cancelChest() },
+      activate: () => { this.sleep?.manualWork(); this.farm.off('Collector gestartet'); this.cancelChest() },
       stopNavigation: () => {
         this.commands = this.commands.filter(command => typeof command !== 'object' || command.origin?.collect === undefined)
         if (!this.runActive || this.runOrigin?.collect === undefined) return
         this.navigator.stop(); this.settleNavigation()
       },
       publish: () => { this.publishAt = 0 }
+    })
+    this.sleep = new AutoSleeper({
+      get state () { return bot.state }, get navigator () { return bot.navigator }, conditions: this.conditions,
+      now: () => this.now(), send: (name, params) => this.client?.queue(name, params), entityId: () => this.client?.entityId,
+      pause: () => {
+        this.previewJob?.cancel()
+        this.suspendedRun = this.runActive && this.state.navigation.target ? { target: { ...this.state.navigation.target }, origin: this.runOrigin, session: this.state.worldSession } : null
+        this.runActive = false
+        this.navigator.stop()
+        this.farm.suspendForSleep(true); this.collector.suspendForSleep(true)
+      },
+      resume: discard => {
+        this.farm.suspendForSleep(false); this.collector.suspendForSleep(false)
+        const run = this.suspendedRun; this.suspendedRun = null
+        if (discard || !run || this.state.status !== 'spawned' || run.session !== this.state.worldSession) return
+        if (run.origin?.farm !== undefined && !this.farm.acceptsNavigation(run.origin.farm)) return
+        if (run.origin?.collect !== undefined && !this.collector.acceptsNavigation(run.origin.collect)) return
+        this.navigator.start({ ...run.target, ...(run.origin?.farm !== undefined && run.target.y !== undefined ? { exactY: true } : {}) }, this.now())
+        this.runActive = true; this.runOrigin = run.origin
+      },
+      busy: () => this.chestBusy || this.farm.inventoryBusy
     })
   }
 
@@ -120,6 +147,7 @@ export class BotController {
       return true
     }
     if (this.commands.length >= 32) return false
+    if (typeof command === 'object' && command.origin?.farm === undefined && command.origin?.collect === undefined) this.sleep.manualWork()
     this.commands.push(command)
     return true
   }
@@ -135,6 +163,7 @@ export class BotController {
     this.state.tick++
     for (const command of this.commands.splice(0)) {
       if (typeof command === 'object') {
+        if (this.sleep.active) { this.commands.push(command); continue }
         if (command.origin?.collect !== undefined && !this.collector.acceptsNavigation(command.origin.collect)) continue
         if (command.origin?.farm !== undefined && !this.farm.acceptsNavigation(command.origin.farm)) continue
         this.previewJob?.cancel()
@@ -150,6 +179,10 @@ export class BotController {
         this.farm.off('Stopp')
         this.collector.off('Stopp')
         this.cancelChest()
+        this.suspendedRun = null
+        this.sleep.stop()
+        for (const job of this.drops.splice(0)) job.reject(new Error('Gestoppt.'))
+        for (const job of this.deferredChest.splice(0)) job.reject(new Error('Gestoppt.'))
         this.navigator.stop()
         this.settleNavigation()
       } else if (command === 'disconnect') {
@@ -170,15 +203,23 @@ export class BotController {
     if (this.client && this.state.status === 'spawned') {
       const send = (name: string, params: unknown) => this.client?.queue(name, params)
       try {
-        this.state.requestSubchunks(send, this.now()); this.navigator.step(send, this.now())
-        // The bot turns towards the receiver first; the server throws dropped items in the facing direction.
-        for (const job of this.drops.splice(0)) {
-          this.navigator.face(send, job.toward)
-          this.state.inventory.drop(send, job.name, job.count, this.now()).then(job.resolve, job.reject)
+        this.state.requestSubchunks(send, this.now())
+        this.sleep.step()
+        if (!this.sleep.active) {
+          if (!this.chestBusy) this.deferredChest.shift()?.run()
+          this.navigator.step(send, this.now())
+          // The bot turns towards the receiver first; the server throws dropped items in the facing direction.
+          for (const job of this.drops.splice(0)) {
+            this.navigator.face(send, job.toward)
+            this.state.inventory.drop(send, job.name, job.count, this.now()).then(job.resolve, job.reject)
+          }
+          this.stepChest(send)
+          this.farm.step(send)
+          this.collector.step(send)
+        } else if (this.sleep.preparing) {
+          // Finish an already sent chest transfer before changing position; no new jobs start here.
+          this.stepChest(send); this.farm.step(send)
         }
-        this.stepChest(send)
-        this.farm.step(send)
-        this.collector.step(send)
         this.state.inventory.expire(this.now())
       }
       catch (error) { this.failed(error instanceof Error ? error.message : String(error)) }
@@ -226,6 +267,7 @@ export class BotController {
   }
 
   private connect () {
+    this.conditions.reset()
     this.state.resetWorld()
     this.state.status = 'connecting'
     this.connectDeadline = this.now() + 30000
@@ -249,6 +291,7 @@ export class BotController {
       client.on('close', () => { if (active()) this.failed('Connection closed') })
       client.on('start_game', (packet: { entity_id?: bigint | string; player_position: Position; rotation?: { x: number; z: number }; dimension: number | string; block_network_ids_are_hashes?: boolean; current_tick?: bigint }) => {
         if (!active()) return
+        this.conditions.start(packet as { rain_level?: number; lightning_level?: number })
         if (packet.entity_id !== undefined) selfUniqueId = String(packet.entity_id)
         if (typeof packet.block_network_ids_are_hashes === 'boolean') this.state.beginWorld(packet.dimension, packet.block_network_ids_are_hashes)
         if (typeof packet.current_tick === 'bigint') this.navigator.synchroniseTick(packet.current_tick)
@@ -256,6 +299,18 @@ export class BotController {
         if (Number.isFinite(packet.rotation?.x)) this.state.pitch = packet.rotation!.x
         if (Number.isFinite(packet.rotation?.z)) this.state.yaw = packet.rotation!.z
         this.state.dimension = packet.dimension
+      })
+      client.on('set_time', packet => { if (active()) this.conditions.legacyTime(packet.time, this.now()) })
+      client.on('sync_world_clocks', packet => { if (active()) this.conditions.clocks(packet, this.now()) })
+      client.on('level_event', packet => { if (active()) this.conditions.weather(packet.event) })
+      client.on('set_entity_data', packet => {
+        if (active() && Array.isArray(packet.metadata)) this.conditions.metadata(String(packet.runtime_entity_id), String(client.entityId), packet.metadata)
+      })
+      client.on('text', packet => { if (active()) this.conditions.notice(packet, this.config.username, this.now()) })
+      client.on('container_open', packet => { if (active()) this.sleep.opened(packet) })
+      client.on('container_close', packet => { if (active()) this.sleep.closed(packet.window_id) })
+      client.on('add_player', packet => {
+        if (active() && String(packet.runtime_id) !== String(client.entityId)) this.conditions.player(String(packet.runtime_id), packet.username, packet.metadata ?? [])
       })
       client.on('level_chunk', packet => { if (active()) this.state.receiveColumn(packet) })
       client.on('subchunk', packet => { if (active()) this.state.receiveSubchunks(packet) })
@@ -335,7 +390,7 @@ export class BotController {
       client.on('remove_entity', (packet: { entity_id_self: bigint | string }) => {
         if (!active()) return
         const uniqueId = String(packet.entity_id_self)
-        for (const [id, player] of this.state.players) if (player.uniqueId === uniqueId) this.state.players.delete(id)
+        for (const [id, player] of this.state.players) if (player.uniqueId === uniqueId) { this.conditions.remove(id); this.state.players.delete(id) }
         for (const [id, item] of this.state.items) if (item.uniqueId === uniqueId) this.state.items.delete(id)
       })
       // player_list names every player on the server; each record carries its own add/remove type.
@@ -349,8 +404,10 @@ export class BotController {
             if (String(record.entity_unique_id) === selfUniqueId || record.username === this.config.username) continue
             this.state.roster.set(uuid, String(record.username ?? ''))
           } else if (record.type === 'remove') {
+            const name = this.state.roster.get(uuid)
+            if (name) this.conditions.offline(name)
             this.state.roster.delete(uuid)
-            for (const [id, player] of this.state.players) if (player.uuid === uuid) this.state.players.delete(id)
+            for (const [id, player] of this.state.players) if (player.uuid === uuid) { this.conditions.remove(id); this.state.players.delete(id) }
           }
         }
       })
@@ -467,6 +524,10 @@ export class BotController {
    */
   useChest (chest: Position, next: ChestPlanner): Promise<ChestResult> {
     if (this.stopped || !this.client || this.state.status !== 'spawned') return Promise.reject(new Error('Bot ist nicht verbunden.'))
+    if (this.sleep.active) {
+      if (this.deferredChest.length >= 32) return Promise.reject(new Error('Zu viele wartende Kistenaufträge.'))
+      return new Promise((resolve, reject) => this.deferredChest.push({ run: () => { void this.useChest(chest, next).then(resolve, reject) }, reject }))
+    }
     if (this.chestJob) return Promise.reject(new Error('Es ist schon eine Kiste offen.'))
     return new Promise((resolve, reject) => {
       this.chestJob = { chest: { ...chest }, next, phase: 'click', since: this.now(), windowId: null, windowType: null, size: 0, moved: 0, stop: null, cancelled: false, resolve, reject }
@@ -595,6 +656,9 @@ export class BotController {
   }
 
   private closeClient () {
+    this.sleep.reset(); this.suspendedRun = null; this.conditions.reset()
+    this.farm.suspendForSleep(false); this.collector.suspendForSleep(false)
+    for (const job of this.deferredChest.splice(0)) job.reject(new Error('Verbindung getrennt.'))
     this.previewJob?.cancel()
     if (this.state.status === 'spawned') this.logChat('event', '', 'Verbindung getrennt')
     const old = this.client
@@ -618,5 +682,10 @@ export class BotController {
     this.commands = []
     this.closeClient()
     this.state.status = 'disconnected'
+  }
+
+  environment () {
+    const now = this.now(); const sky = this.conditions.skyLight(now)
+    return { ...this.conditions.snapshot(now), light: this.state.status === 'spawned' && this.state.position && sky !== null ? this.state.estimatedLight(this.state.position, sky) : null }
   }
 }

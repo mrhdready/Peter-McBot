@@ -650,6 +650,34 @@ function renderFarmAnchors () {
     select.value = pois.some(poi => poi.id === chosen) ? chosen : '';
   }
 }
+let sleepState = null;
+let sleepPending = false;
+function renderSleep () {
+  if (!sleepState) return;
+  byId('sleep-enabled').disabled = sleepPending;
+  byId('sleep-with-players').disabled = sleepPending || !sleepState.enabled;
+  if (!sleepPending) {
+    byId('sleep-enabled').checked = sleepState.enabled;
+    byId('sleep-with-players').checked = sleepState.onlyWithPlayers;
+  }
+  const message = sleepState.message + (sleepState.blocked ? ' Neuer Arbeitsauftrag oder erneutes Einschalten gibt sie frei.' : '');
+  if (byId('sleep-status').textContent !== message) byId('sleep-status').textContent = message;
+}
+for (const id of ['sleep-enabled', 'sleep-with-players']) {
+  byId(id).onchange = async () => {
+    if (sleepPending) return;
+    const body = {enabled:byId('sleep-enabled').checked, onlyWithPlayers:byId('sleep-with-players').checked};
+    sleepPending = true; renderSleep();
+    try {
+      const response = await fetch('/api/sleep', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'HTTP ' + response.status);
+      sleepState = result.sleep;
+      byId('sleep-feedback').textContent = 'Einstellungen gespeichert.';
+    } catch (error) { byId('sleep-feedback').textContent = 'Speichern fehlgeschlagen: ' + error.message; }
+    sleepPending = false; renderSleep();
+  };
+}
 let farmState = null;
 let farmSettingsPending = false;
 function renderFarm () {
@@ -1204,6 +1232,9 @@ events.onmessage = event => {
   const state = JSON.parse(event.data);
   showConnection(state.status);
   botStatus = state.status;
+  if (state.sleep) { sleepState = state.sleep; renderSleep(); }
+  byId('world-clock').textContent = state.environment?.clock ? 'Ingame ' + state.environment.clock : 'Uhrzeit unbekannt';
+  byId('world-light').textContent = Number.isFinite(state.environment?.light) ? 'Licht ≈ ' + state.environment.light + '/15' : 'Licht unbekannt';
   if (state.skin) skinState = state.skin;
   renderSkin();
   if (state.farm) { farmState = state.farm; renderFarm(); }

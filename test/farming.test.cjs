@@ -495,3 +495,21 @@ test('status 50 reports a rejected move and avoids repeating it for every crop i
   assert.equal(reports.some(report => report.includes('Kein Platz')), false)
   assert.equal(bot.state.inventory.items()[0].count, 576)
 })
+
+test('sleep suspension preserves a harvested cluster and replants once after resuming', async t => {
+  const { bot, client, crops, reports, run } = setup(t)
+  crops.set(key(1, 71, 0), { kind: 'wheat', growth: 7 })
+  bot.farm.start({ x: .5, z: .5, label: 'Basis' }, true)
+  assert.ok(await run(() => !crops.has(key(1, 71, 0))), 'Crop is harvested before the pause')
+  bot.farm.suspendForSleep(true)
+  const sent = client.sent.length
+  await run(() => false, 400)
+  assert.equal(client.sent.length, sent, 'The paused round emits no work packets')
+  assert.equal(bot.farm.status().activity, 'Pausiert (Schlafen)')
+  bot.state.position = { x: 8.5, y: 72.62, z: .5 }
+  bot.farm.suspendForSleep(false)
+  assert.ok(await run(() => !bot.farm.status().enabled))
+  assert.equal(crops.get(key(1, 71, 0))?.growth, 0)
+  assert.equal(client.sent.filter(([name, p]) => name === 'inventory_transaction' && p.transaction?.transaction_data?.held_item?.network_id === 300).length, 1)
+  assert.equal(client.sent.filter(([name, p]) => name === 'player_auth_input' && p.block_action?.some(a => a.action === 'stop_break')).length, 1)
+})

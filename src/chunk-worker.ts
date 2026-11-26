@@ -10,7 +10,7 @@ port.on('message', async message => {
       registry.handleStartGame({ itemstates: [], block_network_ids_are_hashes: message.hashed })
       Chunk = require('prismarine-chunk')(registry)
       const runtimePairs = Uint32Array.from(Object.entries(registry.blocksByRuntimeId).flatMap(([id, block]: [string, any]) => [Number(id) >>> 0, block.stateId]))
-      const blocks = Object.fromEntries(Object.entries(registry.blocksByName).map(([name, block]: [string, any]) => ['minecraft:' + name, { min: block.minStateId, max: block.maxStateId }]))
+      const blocks = Object.fromEntries(Object.entries(registry.blocksByName).map(([name, block]: [string, any]) => ['minecraft:' + name, { min: block.minStateId, max: block.maxStateId, emission: block.emitLight ?? 0, filter: block.filterLight ?? 15 }]))
       const walkFlags = new Uint8Array(registry.blockStates.length)
       const collisionIds = new Int32Array(registry.blockStates.length).fill(-1)
       for (const block of Object.values(registry.blocksByName) as any[]) {
@@ -24,7 +24,7 @@ port.on('message', async message => {
           if (boxes.length === 0) walkFlags[id] = 1
           else if (boxes.length === 1 && boxes[0].every((v: number, i: number) => v === (i < 3 ? 0 : 1))) walkFlags[id] = 2
           // Farmland and paths are 15/16 high; walking on them is safe (only falling tramples farmland).
-          else if (/(?:_slab|_stairs)$|^(?:farmland|grass_path)$/.test(block.name)) walkFlags[id] = 2
+          else if (/(?:_slab|_stairs)$|^(?:farmland|grass_path|bed)$/.test(block.name)) walkFlags[id] = 2
         }
       }
       // minecraft-data gives every door state the same west-side panel. Derive the vanilla panel from facing, open and hinge instead:

@@ -1,4 +1,6 @@
 /* Map-centred layout with sidebar; stacked with a fixed navigation bar below 900px. */
+.world-clock,.world-light { font-variant-numeric:tabular-nums; white-space:nowrap; font-size:.9rem; }
+.sleep-subsetting { margin-left:1rem; }
 :root {
   --bg: #111827; --surface: #1f2937; --surface-2: #273449; --border: #374151; --border-strong: #475569;
   --text: #f3f4f6; --muted: #9ca3af; --accent: #93c5fd; --primary: #2563eb; --primary-text: #fff;

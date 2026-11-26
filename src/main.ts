@@ -30,6 +30,7 @@ const bot = new BotController(config, options => {
 // Places share the map archive's server/world key.
 const mapServer = JSON.stringify([config.host.toLowerCase(), config.port, config.transport])
 bot.farm.loadSettings('./data/farms/' + createHash('sha256').update(JSON.stringify([mapServer, config.mapWorldId])).digest('hex') + '.json')
+bot.sleep.loadSettings('./data/sleep/' + createHash('sha256').update(JSON.stringify([mapServer, config.mapWorldId])).digest('hex') + '.json')
 const archive = new MapArchive('./data/maps', mapServer, config.mapWorldId)
 const places = new PlaceStore('./data/places', mapServer, config.mapWorldId)
 bot.state.onSurfaceTile = tile => archive.observe(tile)

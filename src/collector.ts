@@ -22,6 +22,13 @@ const RETRY_MS = 30000
 
 /** Tick-driven collection: one navigation or pickup wait at a time, with no independent timers. */
 export class Collector {
+  private sleepPausedAt: number | null = null
+  suspendForSleep (pause: boolean) {
+    if (pause && this.sleepPausedAt === null) { this.sleepPausedAt = this.host.now(); this.cancel() }
+    else if (!pause && this.sleepPausedAt !== null) {
+      this.sleepPausedAt = null; this.nextScanAt = 0
+    }
+  }
   onReport: (text: string) => void = () => {}
   private enabled = false
   private anchor: FarmAnchor | null = null
@@ -82,7 +89,7 @@ export class Collector {
 
   status (): CollectorStatus {
     const paused = this.enabled && this.host.now() < this.pausedUntil
-    const activity = !this.enabled ? 'Aus' : this.host.state.status !== 'spawned' ? 'Wartet auf Verbindung' : paused ? 'Pausiert (Chat-Befehl)' : this.activity
+    const activity = !this.enabled ? 'Aus' : this.sleepPausedAt !== null ? 'Pausiert (Schlafen)' : this.host.state.status !== 'spawned' ? 'Wartet auf Verbindung' : paused ? 'Pausiert (Chat-Befehl)' : this.activity
     return { enabled: this.enabled, anchor: this.anchor && { ...this.anchor }, radius: this.radius, item: this.filter, activity, pausedUntil: paused ? this.pausedUntil : null, lastSummary: this.lastSummary }
   }
 
@@ -94,6 +101,7 @@ export class Collector {
   }
 
   step (send: (name: string, params: unknown) => void) {
+    if (this.sleepPausedAt !== null) return
     const state = this.host.state; const p = state.position; const now = this.host.now()
     if (!this.enabled || state.status !== 'spawned' || !p || now < this.pausedUntil) return
     if (!state.inventory.known) { this.setActivity('Wartet auf Inventar'); return }
