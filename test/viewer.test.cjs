@@ -10,6 +10,8 @@ const { ViewerMapping, VIEWER_VERSION, viewerPose } = require('../dist/viewer-ma
 const { WorldState } = require('../dist/state.js')
 const { createWebServer } = require('../dist/web.js')
 const { io } = require('socket.io-client')
+const { viewerEntity } = require('../dist/entities.js')
+const { viewerEntities, MAX_VIEWER_ENTITIES } = require('../dist/viewer-stream.js')
 
 const bedrock = require('prismarine-registry')('bedrock_1.26.60')
 const java = require('minecraft-data')(VIEWER_VERSION)
@@ -19,6 +21,7 @@ const mapping = new ViewerMapping('1.26.60')
 const id = name => bedrock.blocksByName[name].defaultState
 const section = () => ({ data: new Uint32Array(8192).fill(id('air')) })
 const column = () => ({ x: -1, z: 0, sections: new Map(), announced: true, attempts: new Map(), requests: new Map() })
+const mob = (type, x, z, extra = {}) => ({ uniqueId: '-' + x, type, position: { x, y: 64, z }, yaw: 90, headYaw: 45, pitch: 10, living: true, name: '', flags: new Set(), ...extra })
 
 test('viewer starts mesh workers in a browser without Node globals', () => {
   const rendererPath = require.resolve('prismarine-viewer/viewer/lib/worldrenderer')
@@ -211,6 +214,7 @@ test('viewer socket streams the bot identity and other players with viewer-space
   world.status = 'spawned'; world.position = { x: 0, y: 65.62, z: 0 }
   world.players.set('20', { name: 'Alex', position: { x: 5, y: 65.62, z: -3 }, uniqueId: '-5', uuid: 'u', yaw: 90, pitch: 30 })
   world.players.set('21', { name: 'Bob', position: { x: 1, y: 64, z: 1 }, uniqueId: '-6', uuid: 'v' })
+  world.entities.set('30', mob('horse', 2, 2, { width: 1.4, height: 1.6 }))
   const bot = { state: world, username: 'Peter', conditions: { selfSleeping: true }, farm: { status: () => ({}) }, collector: { status: () => ({}) } }
   const web = createWebServer(bot)
   t.after(() => web.close())
@@ -221,6 +225,8 @@ test('viewer socket streams the bot identity and other players with viewer-space
   assert.equal(data.session, world.worldSession)
   assert.deepEqual(data.position, world.position)
   assert.deepEqual(data.self, { name: 'Peter', sleeping: true })
+  assert.deepEqual(data.entities, JSON.parse(JSON.stringify(viewerEntities(world))), 'mobs ride in the same packet')
+  assert.equal(data.entities[0].type, 'horse')
   // The expectation goes through JSON like the socket payload (-0 becomes 0).
   assert.deepEqual(data.players, JSON.parse(JSON.stringify([
     { id: '20', name: 'Alex', ...viewerPose({ x: 5, y: 65.62, z: -3 }, 90, 30) },
@@ -229,6 +235,50 @@ test('viewer socket streams the bot identity and other players with viewer-space
   world.players.delete('20')
   const [later] = await once(socket, 'position')
   assert.deepEqual(later.players.map(player => player.id), ['21'])
+})
+
+test('viewer entity look comes from server bounding box, minecraft-data or a fallback and skips non-mobs', () => {
+  const logs = []
+  const log = console.log
+  console.log = line => logs.push(line)
+  try {
+    assert.deepEqual(viewerEntity(mob('horse', 0, 0, { width: 1.4, height: 1.6 })), { category: 'passive', width: 1.4, height: 1.6 })
+    assert.deepEqual(viewerEntity(mob('zombie', 0, 0)), { category: 'hostile', width: 0.6, height: 1.8 })
+    assert.deepEqual(viewerEntity(mob('chicken', 0, 0, { flags: new Set(['baby']) })), { category: 'passive', width: 0.2, height: 0.35 }, 'data sizes are halved for babies')
+    // Live: a baby chicken reports the adult bounding box; the server's scale shrinks it, else babies are halved.
+    assert.deepEqual(viewerEntity(mob('chicken', 0, 0, { flags: new Set(['baby']), width: 0.6, height: 0.8, scale: 0.25 })), { category: 'passive', width: 0.15, height: 0.2 })
+    assert.deepEqual(viewerEntity(mob('chicken', 0, 0, { flags: new Set(['baby']), width: 0.6, height: 0.8 })), { category: 'passive', width: 0.3, height: 0.4 })
+    assert.deepEqual(viewerEntity(mob('chicken', 0, 0, { width: 0.6, height: 0.8, scale: 1 })), { category: 'passive', width: 0.6, height: 0.8 })
+    // Missing from the 1.21.80 entity list that minecraft-data serves for 1.26.60.
+    assert.deepEqual(viewerEntity(mob('trader_llama', 0, 0, { width: 0.9, height: 1.87 })), { category: 'passive', width: 0.9, height: 1.87 })
+    assert.deepEqual(viewerEntity(mob('copper_golem', 0, 0)), { category: 'other', width: 0.8, height: 0.8 })
+    assert.deepEqual(viewerEntity(mob('chest_boat', 0, 0, { living: false })), { category: 'other', width: 0.8, height: 0.8 }, 'boats are drawn')
+    assert.equal(viewerEntity(mob('leash_knot', 0, 0, { living: false })), null)
+    assert.equal(viewerEntity(mob('arrow', 0, 0, { living: false })), null)
+    assert.equal(viewerEntity(mob('xp_orb', 0, 0, { living: false })), null)
+    assert.equal(viewerEntity(mob('future_projectile', 0, 0, { living: false })), null, 'unknown types without health are skipped')
+    viewerEntity(mob('copper_golem', 0, 0))
+  } finally { console.log = log }
+  assert.equal(logs.filter(line => line === '[viewer] unknown entity type minecraft:copper_golem').length, 1, 'unknown types are logged once')
+})
+
+test('viewer entities are limited to the live radius and the nearest ones, in viewer space', () => {
+  const world = new WorldState(4)
+  assert.deepEqual(viewerEntities(world), [], 'nothing without a bot position')
+  world.position = { x: 0, y: 65.62, z: 0 }
+  world.entities.set('1', mob('cow', 3, 4, { name: 'Berta', flags: new Set(['baby']) }))
+  world.entities.set('2', mob('cow', 70, 0))
+  world.entities.set('3', mob('leash_knot', 1, 1, { living: false }))
+  const [cow] = viewerEntities(world)
+  assert.deepEqual(viewerEntities(world).map(entity => entity.id), ['1'], 'outside the radius and non-mobs are dropped')
+  const pose = viewerPose({ x: 3, y: 64, z: 4 }, 90, 10)
+  assert.deepEqual(cow, { id: '1', type: 'cow', category: 'passive', width: 0.45, height: 0.7, baby: true, name: 'Berta',
+    position: pose.position, yaw: pose.yaw, headYaw: viewerPose(null, 45, 0).yaw, pitch: pose.pitch })
+  for (let i = 0; i < MAX_VIEWER_ENTITIES + 10; i++) world.entities.set('n' + i, mob('pig', 10 + i * .1, 0))
+  const drawn = viewerEntities(world)
+  assert.equal(drawn.length, MAX_VIEWER_ENTITIES)
+  assert.equal(drawn[0].id, '1', 'nearest first')
+  assert.equal(drawn.at(-1).id, 'n' + (MAX_VIEWER_ENTITIES - 2))
 })
 
 test('viewer discards a column converted during a session reset and rejects foreign origins', { timeout: 15000 }, async t => {

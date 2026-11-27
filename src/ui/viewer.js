@@ -4,6 +4,7 @@ const { io } = require('socket.io-client');
 
 const EYE_HEIGHT = 1.62;
 const BOT_COLOR = 0x3b82f6;
+const MOB_COLORS = { passive: 0x4caf50, hostile: 0xe53935, other: 0x9e9e9e };
 
 // Same FNV-1a hash as the map's animal emoji, so a player keeps the colour across sessions.
 function nameHue (name) {
@@ -54,9 +55,11 @@ window.createBotViewer = async function (container, report, signal, playerLabel 
     centered = true;
   };
   // Placeholder figures: body box, head with a light face marker on the -Z (forward) side, name tag above.
-  const geometry = { body: new THREE.BoxGeometry(.6, 1.35, .3), head: new THREE.BoxGeometry(.5, .5, .5), face: new THREE.BoxGeometry(.3, .1, .02) };
+  const geometry = { body: new THREE.BoxGeometry(.6, 1.35, .3), head: new THREE.BoxGeometry(.5, .5, .5), face: new THREE.BoxGeometry(.3, .1, .02), unit: new THREE.BoxGeometry(1, 1, 1) };
   const faceMaterial = new THREE.MeshLambertMaterial({ color: 0xf5f5f5 });
   const players = new Map();
+  const mobs = new Map();
+  const raycaster = new THREE.Raycaster();
   let botFigure = null;
   let botInfo = null;
   const nameTag = text => {
@@ -96,7 +99,56 @@ window.createBotViewer = async function (container, report, signal, playerLabel 
     figure.tag.material.map.dispose();
     figure.tag.material.dispose();
   };
+  // Mobs: a hitbox-sized body box in the category colour with a head cube at the top front edge,
+  // turned by the head yaw. Only named mobs carry a name tag; hovering shows the type.
+  const createMob = entity => {
+    const root = new THREE.Group();
+    const model = new THREE.Group();
+    const material = new THREE.MeshLambertMaterial({ color: MOB_COLORS[entity.category] ?? MOB_COLORS.other });
+    const body = new THREE.Mesh(geometry.unit, material);
+    const head = new THREE.Group();
+    const headBox = new THREE.Mesh(geometry.unit, material);
+    const face = new THREE.Mesh(geometry.face, faceMaterial);
+    head.add(headBox, face);
+    model.add(body, head);
+    root.add(model);
+    const tag = entity.name ? nameTag(entity.name) : null;
+    if (tag) root.add(tag);
+    viewer.scene.add(root);
+    return { key: entity.category + '|' + entity.name, root, model, body, head, headBox, face, material, tag, yaw: 0, headYaw: 0, pitch: 0, placed: false };
+  };
+  const shapeMob = (mob, entity) => {
+    const w = entity.width; const h = entity.height; const s = Math.max(.2, Math.min(w, h) * .5);
+    mob.body.scale.set(w, h, w); mob.body.position.y = h / 2;
+    mob.headBox.scale.set(s, s, s);
+    mob.head.position.set(0, h, -w / 2);
+    mob.face.scale.setScalar(s / .5); mob.face.position.set(0, s * .1, -s / 2 - .011);
+    if (mob.tag) mob.tag.position.y = h + s / 2 + .35;
+    mob.body.userData.type = mob.headBox.userData.type = entity.type;
+  };
+  const removeMob = mob => {
+    viewer.scene.remove(mob.root);
+    mob.material.dispose();
+    if (mob.tag) { mob.tag.material.map.dispose(); mob.tag.material.dispose(); }
+  };
+  const turnToward = (from, to, blend) => from + Math.atan2(Math.sin(to - from), Math.cos(to - from)) * blend;
+  // Positions are feet; same damping and snapping as the players.
+  const followMob = (mob, target, blend) => {
+    if (!mob.placed || mob.root.position.distanceToSquared(target.position) > 64) {
+      mob.root.position.copy(target.position);
+      mob.yaw = target.yaw; mob.headYaw = target.headYaw; mob.pitch = target.pitch; mob.placed = true;
+    } else {
+      mob.root.position.lerp(target.position, blend);
+      mob.yaw = turnToward(mob.yaw, target.yaw, blend);
+      mob.headYaw = turnToward(mob.headYaw, target.headYaw, blend);
+      mob.pitch += (target.pitch - mob.pitch) * blend;
+    }
+    mob.model.rotation.set(0, mob.yaw, 0, 'YXZ');
+    mob.head.rotation.set(mob.pitch, mob.headYaw - mob.yaw, 0, 'YXZ');
+  };
   const clearFigures = () => {
+    for (const mob of mobs.values()) removeMob(mob);
+    mobs.clear();
     for (const figure of players.values()) removeFigure(figure);
     players.clear();
     if (botFigure) removeFigure(botFigure);
@@ -182,6 +234,20 @@ window.createBotViewer = async function (container, report, signal, playerLabel 
       figure.target = player;
     }
     for (const [id, figure] of players) if (!seen.has(id)) { removeFigure(figure); players.delete(id); }
+    const seenMobs = new Set();
+    for (const entity of data.entities ?? []) {
+      if (!entity.position) continue;
+      seenMobs.add(entity.id);
+      let mob = mobs.get(entity.id);
+      if (mob?.key !== entity.category + '|' + entity.name) {
+        if (mob) removeMob(mob);
+        mob = createMob(entity);
+        mobs.set(entity.id, mob);
+      }
+      shapeMob(mob, entity);
+      mob.target = entity;
+    }
+    for (const [id, mob] of mobs) if (!seenMobs.has(id)) { removeMob(mob); mobs.delete(id); }
   };
   socket.on('connect_error', () => fail('3D-Verbindung fehlgeschlagen. Karte bleibt verfügbar.'));
   socket.on('disconnect', () => { if (!disposed) fail('3D-Verbindung beendet. Bitte erneut auswählen.'); });
@@ -205,6 +271,12 @@ window.createBotViewer = async function (container, report, signal, playerLabel 
     drag = { x: event.clientX, y: event.clientY };
   });
   listen(renderer.domElement, 'pointermove', event => {
+    if (!drag && mobs.size) {
+      // Hover tooltip with the mob type under the pointer.
+      raycaster.setFromCamera(new THREE.Vector2(event.offsetX / container.clientWidth * 2 - 1, 1 - event.offsetY / container.clientHeight * 2), viewer.camera);
+      const parts = [...mobs.values()].flatMap(mob => [mob.body, mob.headBox]);
+      renderer.domElement.title = raycaster.intersectObjects(parts, false)[0]?.object.userData.type ?? '';
+    }
     if (!drag || mode !== 'free') return;
     yaw -= (event.clientX - drag.x) * .004 * (invertX ? -1 : 1);
     pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, pitch - (event.clientY - drag.y) * .004 * (invertY ? -1 : 1)));
@@ -227,6 +299,7 @@ window.createBotViewer = async function (container, report, signal, playerLabel 
     lastTime = time;
     const blend = 1 - Math.exp(-elapsed / .06);
     for (const figure of players.values()) follow(figure, figure.target, false, blend);
+    for (const mob of mobs.values()) followMob(mob, mob.target, blend);
     if (botFigure) {
       // The bot's own figure would sit inside the bot-view camera, and inside a free camera that starts at the bot's eyes.
       botFigure.root.visible = mode === 'free' && !!pose?.position && viewer.camera.position.distanceToSquared(pose.position) > 2.25;

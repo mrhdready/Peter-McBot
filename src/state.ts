@@ -1,5 +1,6 @@
 import { ChunkWorld } from './world.js'
 import { Inventory } from './inventory.js'
+import type { Entity } from './entities.js'
 
 export type Position = { x: number; y: number; z: number }
 export type Status = 'disconnected' | 'connecting' | 'spawned' | 'reconnecting' | 'dead' | 'error'
@@ -31,6 +32,8 @@ export class WorldState extends ChunkWorld {
   inventory = new Inventory()
   // Dropped item entities the server reports near the bot, keyed by runtime entity ID; memory only.
   items = new Map<string, ItemEntity>()
+  // Other entities (mobs, vehicles, knots …) the server reports near the bot, keyed by runtime entity ID; memory only.
+  entities = new Map<string, Entity>()
   resetWorld () {
     this.yaw = 0
     this.pitch = 0
@@ -41,6 +44,7 @@ export class WorldState extends ChunkWorld {
     this.players.clear()
     this.roster.clear()
     this.items.clear()
+    this.entities.clear()
     this.inventory.reset()
     this.clearChunks()
   }

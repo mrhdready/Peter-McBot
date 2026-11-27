@@ -9,6 +9,7 @@ import { Collector } from './collector.js'
 import { Farmer } from './farming.js'
 import { WorldConditions } from './world-conditions.js'
 import { AutoSleeper } from './sleep.js'
+import { applyMetadata, byteAngle, type Entity } from './entities.js'
 
 export interface BotClient extends EventEmitter {
   queue(name: string, params: unknown): void
@@ -26,6 +27,13 @@ export type ChatLine = { at: number; kind: 'chat' | 'whisper' | 'bot' | 'event';
 const CHAT_LOG_SIZE = 100
 const isPosition = (position: Position | undefined): position is Position =>
   Boolean(position) && [position!.x, position!.y, position!.z].every(Number.isFinite)
+const finite = (value?: number) => Number.isFinite(value) ? value! : 0
+/** Updates the angles a packet carries; missing ones keep their value. */
+function turn (entity: Entity, yaw?: number, headYaw?: number, pitch?: number) {
+  if (Number.isFinite(yaw)) entity.yaw = yaw!
+  if (Number.isFinite(headYaw)) entity.headYaw = headYaw!
+  if (Number.isFinite(pitch)) entity.pitch = pitch!
+}
 const isInventoryWindow = (id: string | number | undefined) => id === 'inventory' || id === 0
 type DropJob = { name: string; count: number; toward: Position; resolve: (dropped: number) => void; reject: (error: Error) => void }
 /** Why a chest visit ended: the transfer is complete, the source ran out, the target is full, or something interrupted it. */
@@ -306,7 +314,10 @@ export class BotController {
       client.on('sync_world_clocks', packet => { if (active()) this.conditions.clocks(packet, this.now()) })
       client.on('level_event', packet => { if (active()) this.conditions.weather(packet.event) })
       client.on('set_entity_data', packet => {
-        if (active() && Array.isArray(packet.metadata)) this.conditions.metadata(String(packet.runtime_entity_id), String(client.entityId), packet.metadata)
+        if (!active() || !Array.isArray(packet.metadata)) return
+        this.conditions.metadata(String(packet.runtime_entity_id), String(client.entityId), packet.metadata)
+        const entity = this.state.entities.get(String(packet.runtime_entity_id))
+        if (entity) applyMetadata(entity, packet.metadata)
       })
       client.on('text', packet => { if (active()) this.conditions.notice(packet, this.config.username, this.now()) })
       client.on('container_open', packet => {
@@ -364,23 +375,41 @@ export class BotController {
           this.movePlayer(id, packet.position, packet.yaw, packet.pitch)
         }
       })
-      // Delta packets carry only the changed absolute coordinates; rot_x is pitch and rot_y yaw, in degrees.
-      client.on('move_entity_delta', (packet: { runtime_entity_id: bigint | string; x?: number; y?: number; z?: number; rot_x?: number; rot_y?: number }) => {
+      // Mobs, vehicles and other entities; players and dropped items have their own packets.
+      client.on('add_entity', (packet: { unique_id: bigint | string; runtime_id: bigint | string; entity_type: string; position: Position; yaw?: number; head_yaw?: number;
+        pitch?: number; attributes?: { name?: string }[]; metadata?: { key: string; value: unknown }[] }) => {
+        if (!active() || !isPosition(packet.position)) return
+        const entity: Entity = { uniqueId: String(packet.unique_id), type: String(packet.entity_type ?? '').replace(/^minecraft:/, ''), position: { ...packet.position },
+          yaw: finite(packet.yaw), headYaw: finite(packet.head_yaw ?? packet.yaw), pitch: finite(packet.pitch),
+          living: !!packet.attributes?.some(attribute => attribute.name === 'minecraft:health'), name: '', flags: new Set() }
+        applyMetadata(entity, packet.metadata ?? [])
+        this.state.entities.set(String(packet.runtime_id), entity)
+      })
+      // Delta packets carry only the changed absolute coordinates. Rotations are raw bytes (256 per turn):
+      // rot_x is pitch, rot_y (body) yaw and rot_z head yaw.
+      client.on('move_entity_delta', (packet: { runtime_entity_id: bigint | string; x?: number; y?: number; z?: number; rot_x?: number; rot_y?: number; rot_z?: number }) => {
         const id = String(packet.runtime_entity_id)
-        const entity = active() ? this.state.players.get(id) ?? this.state.items.get(id) : undefined
+        const entity = active() ? this.state.players.get(id) ?? this.state.items.get(id) ?? this.state.entities.get(id) : undefined
         if (!entity) return
         const position = {
           x: Number.isFinite(packet.x) ? packet.x! : entity.position.x,
           y: Number.isFinite(packet.y) ? packet.y! : entity.position.y,
           z: Number.isFinite(packet.z) ? packet.z! : entity.position.z
         }
-        if (this.state.players.has(id)) this.movePlayer(packet.runtime_entity_id, position, packet.rot_y, packet.rot_x)
-        else entity.position = position
+        const angle = (value?: number) => Number.isFinite(value) ? byteAngle(value!) : undefined
+        if (this.state.players.has(id)) { this.movePlayer(packet.runtime_entity_id, position, angle(packet.rot_y), angle(packet.rot_x)); return }
+        entity.position = position
+        const mob = this.state.entities.get(id)
+        if (mob) turn(mob, angle(packet.rot_y), angle(packet.rot_z), angle(packet.rot_x))
       })
-      client.on('move_entity', (packet: { runtime_entity_id: bigint | string; position: Position }) => {
+      // Absolute moves carry byterot angles, which bedrock-protocol already converts to degrees.
+      client.on('move_entity', (packet: { runtime_entity_id: bigint | string; position: Position; rotation?: { yaw?: number; pitch?: number; head_yaw?: number } }) => {
         if (!active() || !isPosition(packet.position)) return
-        const entity = this.state.players.get(String(packet.runtime_entity_id)) ?? this.state.items.get(String(packet.runtime_entity_id))
+        const id = String(packet.runtime_entity_id)
+        const entity = this.state.players.get(id) ?? this.state.items.get(id) ?? this.state.entities.get(id)
         if (entity) entity.position = { ...packet.position }
+        const mob = this.state.entities.get(id)
+        if (mob) turn(mob, packet.rotation?.yaw, packet.rotation?.head_yaw, packet.rotation?.pitch)
       })
       // Dropped items (e.g. from harvesting) until someone picks them up or they despawn; the farmer walks onto them.
       client.on('add_item_entity', (packet: { runtime_entity_id: bigint | string; entity_id_self?: bigint | string; item?: { network_id?: number; count?: number }; position: Position }) => {
@@ -402,6 +431,7 @@ export class BotController {
         const uniqueId = String(packet.entity_id_self)
         for (const [id, player] of this.state.players) if (player.uniqueId === uniqueId) { this.conditions.remove(id); this.state.players.delete(id) }
         for (const [id, item] of this.state.items) if (item.uniqueId === uniqueId) this.state.items.delete(id)
+        for (const [id, entity] of this.state.entities) if (entity.uniqueId === uniqueId) this.state.entities.delete(id)
       })
       // player_list names every player on the server; each record carries its own add/remove type.
       // The bot itself is recognised by unique ID or name.

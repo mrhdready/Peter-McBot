@@ -283,9 +283,53 @@ test('other players keep the look direction from add, move and delta packets for
   assert.equal(alex().yaw, 90); assert.equal(alex().pitch, 10)
   client.emit('move_player', { runtime_id: 20n, position: { x: 6, y: 65.62, z: -3 }, yaw: -45, pitch: -20 })
   assert.equal(alex().yaw, -45); assert.equal(alex().pitch, -20)
-  client.emit('move_entity_delta', { runtime_entity_id: 20n, x: 7, rot_y: 180 })
-  assert.equal(alex().yaw, 180); assert.equal(alex().pitch, -20, 'A delta without rot_x keeps the pitch')
+  // Delta rotations are raw bytes, 256 per turn (live-verified range 0–255).
+  client.emit('move_entity_delta', { runtime_entity_id: 20n, x: 7, rot_y: 64 })
+  assert.equal(alex().yaw, 90); assert.equal(alex().pitch, -20, 'A delta without rot_x keeps the pitch')
+  client.emit('move_entity_delta', { runtime_entity_id: 20n, rot_x: 255, rot_y: 128 })
+  assert.equal(alex().yaw, -180); assert.equal(alex().pitch, -1.40625, 'Bytes past half a turn are negative angles')
   assert.deepEqual(bot.state.snapshot().players, [{ id: '20', name: 'Alex', x: 7, y: 65.62, z: -3 }], 'The map snapshot is unchanged')
+  bot.stop()
+})
+
+test('mobs are tracked from add_entity, move, metadata and remove packets and cleared with the world', () => {
+  const { bot, clients } = setup()
+  bot.enqueue('connect'); bot.step()
+  const client = clients[0]
+  client.emit('start_game', { player_position: { x: 0, y: 64, z: 0 }, dimension: 0 })
+  client.emit('spawn')
+  // Shape of the live horse from scripts/smoke-entities.cjs (bedrock-protocol decodes the flags by name).
+  client.emit('add_entity', { unique_id: -38654655210n, runtime_id: 51246n, entity_type: 'minecraft:horse', position: { x: -52.5, y: 63.9375, z: -174.9 },
+    pitch: -1.40625, yaw: -98.4375, head_yaw: -172.96875, body_yaw: -98.4375, attributes: [{ name: 'minecraft:health', value: 22 }],
+    metadata: [{ key: 'flags', value: { _value: 844460636241920n, tamed: true, leashed: true, baby: false } }, { key: 'nametag', value: '' },
+      { key: 'boundingbox_width', value: 1.4 }, { key: 'boundingbox_height', value: 1.6 }] })
+  client.emit('add_entity', { unique_id: -7n, runtime_id: 60n, entity_type: 'minecraft:leash_knot', position: { x: 1, y: 64, z: 1 }, attributes: [], metadata: [] })
+  const horse = () => bot.state.entities.get('51246')
+  assert.equal(horse().type, 'horse')
+  assert.equal(horse().living, true)
+  assert.equal(horse().yaw, -98.4375); assert.equal(horse().headYaw, -172.96875); assert.equal(horse().pitch, -1.40625)
+  assert.deepEqual([...horse().flags].sort(), ['leashed', 'tamed'])
+  assert.equal(horse().width, 1.4); assert.equal(horse().height, 1.6)
+  assert.equal(bot.state.entities.get('60').living, false)
+  client.emit('move_entity_delta', { runtime_entity_id: 51246n, x: -52, rot_y: 192, rot_z: 64 })
+  assert.deepEqual(horse().position, { x: -52, y: 63.9375, z: -174.9 })
+  assert.equal(horse().yaw, -90); assert.equal(horse().headYaw, 90); assert.equal(horse().pitch, -1.40625)
+  // Absolute moves carry degrees already (bedrock-protocol converts byterot).
+  client.emit('move_entity', { runtime_entity_id: 51246n, position: { x: -50, y: 64, z: -170 }, rotation: { yaw: 45, pitch: 0, head_yaw: 30 } })
+  assert.deepEqual(horse().position, { x: -50, y: 64, z: -170 })
+  assert.equal(horse().yaw, 45); assert.equal(horse().headYaw, 30)
+  client.emit('set_entity_data', { runtime_entity_id: 51246n, metadata: [{ key: 'flags', value: { _value: 2048n, baby: true } }, { key: 'nametag', value: '§aFury' }, { key: 'scale', value: 0.5 }] })
+  assert.deepEqual([...horse().flags], ['baby'])
+  assert.equal(horse().scale, 0.5)
+  assert.equal(horse().name, 'Fury')
+  assert.deepEqual(bot.state.snapshot().players, [], 'Mobs are not players')
+  assert.equal('entities' in bot.state.snapshot(), false, 'Mobs stay out of the SSE snapshot')
+  client.emit('remove_entity', { entity_id_self: 51246n })
+  assert.equal(bot.state.entities.size, 2, 'A runtime ID in remove_entity is another entity')
+  client.emit('remove_entity', { entity_id_self: -38654655210n })
+  assert.deepEqual([...bot.state.entities.keys()], ['60'])
+  client.emit('change_dimension', { dimension: 1 })
+  assert.equal(bot.state.entities.size, 0, 'A dimension change clears the entities')
   bot.stop()
 })
 

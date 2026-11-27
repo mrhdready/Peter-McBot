@@ -94,8 +94,12 @@ async function cameraHarness (t) {
     pointer (type, x, y = 100) {
       canvas.dispatchEvent(Object.assign(new Event(type), { clientX: x, clientY: y, button: 0, pointerId: 1 }))
     },
-    entities (players, self = { name: 'Peter', sleeping: false }, session = 1) {
-      socket.emit('position', { ...lastPose, session, status: 'spawned', coverage: { radius: 4 }, self, players })
+    entities (players, self = { name: 'Peter', sleeping: false }, session = 1, entities = []) {
+      socket.emit('position', { ...lastPose, session, status: 'spawned', coverage: { radius: 4 }, self, players, entities })
+    },
+    hover (x, y) {
+      canvas.dispatchEvent(Object.assign(new Event('pointermove'), { offsetX: x, offsetY: y, button: 0, pointerId: 1 }))
+      return canvas.title
     },
     reset (session) { socket.emit('reset', { session, version: '1.21.4' }) },
     figures () { return viewer.scene.children.filter(child => child.isGroup) }
@@ -134,6 +138,38 @@ test('placeholder figures follow players, hide the bot in bot view and lie down 
   assert.deepEqual(h.figures(), [bot], 'stale sessions are ignored')
   h.reset(2)
   assert.deepEqual(h.figures(), [], 'a session reset removes all figures')
+  assert.equal(h.reports.some(([, failed]) => failed), false)
+})
+
+test('mob boxes take hitbox size, category colour and head yaw, carry tags only when named and show the type on hover', async t => {
+  const h = await cameraHarness(t)
+  const horse = (position, extra = {}) => ({ id: '30', type: 'horse', category: 'passive', width: 1.4, height: 1.6, baby: false, name: '',
+    position, yaw: 0, headYaw: .5, pitch: 0, ...extra })
+  h.pose({ x: 0, y: 65.62, z: 10 })
+  h.entities([], undefined, 1, [horse({ x: 0, y: 64, z: 0 }), horse({ x: 3, y: 64, z: 0 }, { id: '31', type: 'zombie', category: 'hostile', width: .6, height: 1.8, name: 'Bob' })])
+  h.frame(16)
+  const [, mob, zombie] = h.figures()
+  assert.equal(h.figures().length, 3, 'bot and two mobs')
+  assert.deepEqual(mob.position.toArray(), [0, 64, 0], 'mob positions are feet')
+  const [model] = mob.children
+  const [body, head] = model.children
+  assert.deepEqual(body.scale.toArray(), [1.4, 1.6, 1.4])
+  assert.equal(body.position.y, .8)
+  assert.equal(body.material.color.getHex(), 0x4caf50)
+  assert.equal(head.rotation.y, .5, 'the head turns by the head yaw relative to the body')
+  assert.equal(mob.children.length, 1, 'unnamed mobs carry no tag')
+  assert.equal(zombie.children.length, 2, 'named mobs carry a tag')
+  assert.equal(zombie.children[0].children[0].material.color.getHex(), 0xe53935)
+  // The camera at z=10 looks along -Z at the horse's body.
+  h.camera.position.set(0, 64.8, 10); h.camera.rotation.set(0, 0, 0); h.camera.updateMatrixWorld()
+  mob.updateMatrixWorld(true)
+  assert.equal(h.hover(400, 300), 'horse')
+  assert.equal(h.hover(0, 0), '')
+  h.entities([], undefined, 1, [horse({ x: 0, y: 64, z: 0 }, { name: 'Fury' })])
+  assert.equal(h.figures().length, 2, 'mobs missing from the list are removed')
+  assert.equal(h.figures()[1].children.length, 2, 'a new name rebuilds the figure with a tag')
+  h.reset(2)
+  assert.deepEqual(h.figures(), [], 'a session reset removes the mobs')
   assert.equal(h.reports.some(([, failed]) => failed), false)
 })
 

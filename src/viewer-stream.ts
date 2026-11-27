@@ -6,8 +6,32 @@ import type { WorldState } from './state.js'
 import type { WorldColumn } from './world.js'
 import { VIEWER_VERSION, viewerPose } from './viewer-mapping.js'
 import { bundledAssetFiles, type AssetFiles } from './viewer-assets.js'
+import { viewerEntity } from './entities.js'
 
 export type ViewerSelf = { name: string; sleeping: boolean }
+
+export const MAX_VIEWER_ENTITIES = 128
+
+/**
+ * Drawn entities within the live radius, nearest first and at most MAX_VIEWER_ENTITIES. Positions are feet,
+ * yaw/headYaw/pitch viewer-space radians like the bot pose.
+ */
+export function viewerEntities (world: WorldState) {
+  const p = world.position
+  if (!p) return []
+  const range = world.radius * 16
+  const drawn = []
+  for (const [id, entity] of world.entities) {
+    const distance = (entity.position.x - p.x) ** 2 + (entity.position.z - p.z) ** 2
+    if (distance > range * range) continue
+    const look = viewerEntity(entity)
+    if (!look) continue
+    const pose = viewerPose({ ...entity.position }, entity.yaw, entity.pitch)
+    drawn.push({ distance, entity: { id, type: entity.type, ...look, baby: entity.flags.has('baby'), name: entity.name,
+      position: pose.position, yaw: pose.yaw, headYaw: viewerPose(null, entity.headYaw, 0).yaw, pitch: pose.pitch } })
+  }
+  return drawn.sort((a, b) => a.distance - b.distance).slice(0, MAX_VIEWER_ENTITIES).map(item => item.entity)
+}
 
 /** Independent viewer feed: subscriptions never request chunks or control the bot. */
 export function createViewerStream (server: HttpServer, world: WorldState, assets: () => AssetFiles = bundledAssetFiles,
@@ -70,7 +94,8 @@ export function createViewerStream (server: HttpServer, world: WorldState, asset
         // dropped while the transport is still writing. Player positions are eye heights like the bot's.
         socket.volatile.emit('position', { ...viewerPose(world.position, world.yaw, world.pitch), session, status: world.status, coverage: world.coverage(),
           self: self(), players: [...world.players].map(([id, player]) =>
-            ({ id, name: player.name, ...viewerPose({ ...player.position }, player.yaw ?? 0, player.pitch ?? 0) })) })
+            ({ id, name: player.name, ...viewerPose({ ...player.position }, player.yaw ?? 0, player.pitch ?? 0) })),
+          entities: viewerEntities(world) })
         if (awaiting) return
         for (const key of sent.keys()) if (!world.chunks.has(key)) {
           const [x, z] = key.split(':').map(Number)
