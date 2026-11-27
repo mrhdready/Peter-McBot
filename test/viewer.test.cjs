@@ -49,6 +49,53 @@ test('viewer maps palettes, new stair corners, water layers and unsupported bloc
   for (let i = 0; i < bedrock.blockStates.length; i++) assert.ok(java.blocksByStateId[mapping.stateId(i)])
 })
 
+test('viewer maps blocks newer than Java 1.21.4 and draws Bedrock chests as single chests', () => {
+  assert.equal(VIEWER_VERSION, '1.21.11')
+  const copper = Block.fromStateId(mapping.stateId(id('copper_chest')), 1)
+  assert.equal(copper.name, 'copper_chest')
+  assert.equal(copper.getProperties().type, 'single')
+  assert.equal(Block.fromStateId(mapping.stateId(id('chest')), 1).getProperties().type, 'single')
+  assert.equal(require('prismarine-viewer/viewer/lib/version').getVersion(VIEWER_VERSION), VIEWER_VERSION)
+})
+
+test('viewer maps Bedrock-only variants to the closest table entry and poplar to birch', () => {
+  const state = (name, props) => bedrock.blockStates.findIndex(s => s.name === name &&
+    Object.entries(props).every(([key, value]) => String(s.states[key]?.value ?? s.states[key]) === String(value)))
+  const toJava = i => Block.fromStateId(mapping.stateId(i), 1)
+  assert.equal(toJava(state('pumpkin', { 'minecraft:cardinal_direction': 'south' })).name, 'pumpkin')
+  const bamboo = toJava(state('bamboo', { age_bit: 1, bamboo_leaf_size: 'large_leaves', bamboo_stalk_thickness: 'thick' }))
+  assert.equal(bamboo.name, 'bamboo')
+  assert.equal(bamboo.getProperties().leaves, 'large')
+  const log = toJava(state('poplar_log', { pillar_axis: 'x' }))
+  assert.equal(log.name, 'birch_log')
+  assert.equal(log.getProperties().axis, 'x')
+  assert.equal(toJava(state('red_poplar_leaves', { persistent_bit: 0 })).name, 'birch_leaves')
+  assert.equal(mapping.issue(state('poplar_log', { pillar_axis: 'z' })), null)
+  // Every block the table lists gets a translation; its target may still be newer than Java 1.21.11 (no-java-block).
+  const data = require('minecraft-data/data.js').bedrock['1.26.60'].blocksB2J
+  const listed = new Set(Object.keys(data).map(key => key.slice(0, key.indexOf('[')).replace(/^minecraft:/, '')))
+  const unmapped = bedrock.blockStates.filter((s, i) => mapping.issue(i) === 'no-translation' && listed.has(s.name)).map(s => s.name)
+  assert.deepEqual([...new Set(unmapped)], [])
+  // Live value with minecraft-data 3.119.0 (Bedrock 1.26.60 → Java 1.21.11); a rise means a mapping regression.
+  assert.ok(mapping.missing <= 3427, `${mapping.missing} Bedrock states unmapped`)
+})
+
+test('viewer diagnosis reports fallback states with reason and world position', async () => {
+  const withModels = new ViewerMapping('1.26.60', new Set(['stone']))
+  assert.equal(withModels.issue(id('stone')), null)
+  assert.equal(withModels.issue(id('grass_block')), 'no-model')
+  assert.ok(['no-translation', 'no-java-block'].includes(withModels.issue(id('hard_pink_stained_glass'))))
+  assert.match(withModels.describe(id('hard_pink_stained_glass')), /^hard_pink_stained_glass\[/)
+  assert.ok(withModels.withoutModel > 0)
+  const c = column(); const s = section()
+  s.data[(1 << 8) | (2 << 4) | 3] = id('hard_pink_stained_glass')
+  s.data[0] = id('stone')
+  c.sections.set(-4, s)
+  const issues = []
+  await withModels.column(c, () => false, (state, x, y, z) => issues.push([state, x, y, z]))
+  assert.deepEqual(issues, [[id('hard_pink_stained_glass'), -16 + 1, -64 + 2, 3]])
+})
+
 test('viewer serializes both height extremes and preserves confirmed air versus unknown sections in source data', async () => {
   const c = column()
   const low = section(); const high = section()

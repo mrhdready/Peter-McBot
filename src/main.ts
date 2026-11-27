@@ -8,6 +8,7 @@ import { MapArchive } from './map-archive.js'
 import { PlaceStore } from './places.js'
 import { SkinStore } from './skin.js'
 import { ChatCommands } from './chat-commands.js'
+import { ViewerAssets } from './viewer-assets.js'
 
 const config = readConfig()
 try { console.log('BDS operator key pin (SHA-256): ' + readFileSync('./data/server-key.sha256', 'utf8').trim()) }
@@ -38,7 +39,13 @@ bot.state.onSurfaceTile = tile => archive.observe(tile)
 if (config.chatCommands) new ChatCommands(bot, places, config.radius * 16, config.username)
 const mapTimer = setInterval(() => { void archive.flush().catch(error => console.error('Map persistence:', error)) }, 5000)
 mapTimer.unref()
-const web = createWebServer(bot, archive, places, skins)
+const viewerAssets = new ViewerAssets('./data/viewer-assets')
+if (config.minecraftEula) {
+  void viewerAssets.prepare().catch(error => console.error('[viewer] Minecraft assets unavailable, using the bundled 1.21.4 textures:', error instanceof Error ? error.message : error))
+} else if (viewerAssets.files().source === 'fallback') {
+  console.log('[viewer] using the bundled 1.21.4 textures; set MINECRAFT_EULA=true to download the Minecraft client assets')
+}
+const web = createWebServer(bot, archive, places, skins, viewerAssets)
 web.server.on('error', error => {
   console.error(error)
   bot.stop()

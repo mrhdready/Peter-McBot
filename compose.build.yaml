@@ -18,6 +18,7 @@ services:
       CHUNK_RADIUS: ${CHUNK_RADIUS:-4}
       CHAT_COMMANDS: ${CHAT_COMMANDS:-on}
       OPEN_DOORS: ${OPEN_DOORS:-on}
+      MINECRAFT_EULA: ${MINECRAFT_EULA:-false}
       WEB_HOST: 0.0.0.0
       WEB_PORT: 3000
     ports:

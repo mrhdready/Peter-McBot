@@ -9,10 +9,12 @@ import { SKIN_PNG_MAX, type SkinStore } from './skin.js'
 import { readFileSync } from 'node:fs'
 import { createReadStream } from 'node:fs'
 import { createViewerStream } from './viewer-stream.js'
+import { bundledAssetFiles, type ViewerAssets } from './viewer-assets.js'
 import path from 'node:path'
 
 // Optional place store (POIs, navigation history); its revision rides along in SSE.
-export function createWebServer (bot: BotController, archive?: MapArchive, places?: PlaceStore, skins?: SkinStore) {
+export function createWebServer (bot: BotController, archive?: MapArchive, places?: PlaceStore, skins?: SkinStore, viewerAssets?: ViewerAssets) {
+  const assetFiles = () => viewerAssets?.files() ?? bundledAssetFiles()
   const streams = new Set<ServerResponse>()
   let mapClients = 0
   let metrics: ReturnType<typeof mapRuntimeMetrics> | null = null
@@ -33,14 +35,16 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
       response.writeHead(code, { 'Content-Type': 'application/json' })
       response.end(JSON.stringify(body))
     }
-    const viewerAssets: Record<string, string> = {
-      '/viewer/index.js': 'text/javascript', '/viewer/worker.js': 'text/javascript',
-      '/viewer/textures/1.21.4.png': 'image/png', '/viewer/blocksStates/1.21.4.json': 'application/json'
-    }
-    if (request.method === 'GET' && viewerAssets[request.url || '']) {
-      const gzip = /\bgzip\b/.test(request.headers['accept-encoding'] || '') && !request.url!.endsWith('.png')
-      const file = path.join(__dirname, 'ui', request.url!.slice(1) + (gzip ? '.gz' : ''))
-      response.setHeader('Content-Type', viewerAssets[request.url!])
+    // Atlas and block states come from the Mojang cache when present, otherwise from the bundled 1.21.4 fallback.
+    const viewerAsset = request.method !== 'GET' ? null
+      : request.url === '/viewer/index.js' || request.url === '/viewer/worker.js' ? { file: path.join(__dirname, 'ui', request.url.slice(1)), type: 'text/javascript', gzip: true }
+        : request.url === '/viewer/atlas.png' ? { file: assetFiles().atlas, type: 'image/png', gzip: false }
+          : request.url === '/viewer/blocksStates.json' ? { file: assetFiles().blockStates, type: 'application/json', gzip: true }
+            : null
+    if (viewerAsset) {
+      const gzip = viewerAsset.gzip && /\bgzip\b/.test(request.headers['accept-encoding'] || '')
+      const file = viewerAsset.file + (gzip ? '.gz' : '')
+      response.setHeader('Content-Type', viewerAsset.type)
       response.setHeader('Vary', 'Accept-Encoding')
       if (gzip) response.setHeader('Content-Encoding', 'gzip')
       const stream = createReadStream(file)
@@ -278,7 +282,7 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
   })
   server.requestTimeout = 10000
   server.headersTimeout = 10000
-  const closeViewer = createViewerStream(server, bot.state)
+  const closeViewer = createViewerStream(server, bot.state, assetFiles)
   return {
     server, broadcast,
     close: () => {

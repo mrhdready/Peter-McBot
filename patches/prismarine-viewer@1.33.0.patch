@@ -134,21 +134,48 @@
    // console.log(`Processed ${sections.length} sections in ${time} ms (${time / sections.length} ms/section)`)
 --- a/viewer/lib/models.js
 +++ b/viewer/lib/models.js
-@@ -130,7 +130,7 @@
+@@ -5,6 +5,8 @@
+ for (const key of Object.keys(tints)) {
+   tints[key] = prepareTints(tints[key])
+ }
++// Fixed colours for blocks newer than the 1.16.2 tint table (leaf litter approximates the dry foliage map).
++const extraTints = { mangrove_leaves: tintToGl(0x92c648), leaf_litter: tintToGl(0x9c7a48) }
+
+ function prepareTints (tints) {
+   const map = new Map()
+@@ -130,7 +132,7 @@
      if (!neighbor) continue
      if (neighbor.type === type) continue
-     if ((neighbor.isCube && !isUp) || neighbor.material === 'plant' || neighbor.getProperties().waterlogged) continue
+-    if ((neighbor.isCube && !isUp) || neighbor.material === 'plant' || neighbor.getProperties().waterlogged) continue
 -    if (neighbor.position.y < 0) continue
++    if ((neighbor.isCube && !isUp) || String(neighbor.material).split(';').includes('plant') || neighbor.getProperties().waterlogged) continue
 +    if (neighbor.position.y < -64) continue
- 
+
      let tint = [1, 1, 1]
      if (water) {
-@@ -241,7 +241,7 @@
+@@ -241,7 +243,7 @@
        if (!neighbor) continue
        if (cullIfIdentical && neighbor.type === block.type) continue
        if (!neighbor.transparent && neighbor.isCube) continue
 -      if (neighbor.position.y < 0) continue
 +      if (neighbor.position.y < -64) continue
      }
- 
+
      const minx = element.from[0]
+@@ -267,6 +269,8 @@
+           block.name === 'spruce_leaves' ||
+           block.name === 'lily_pad') {
+           tint = tints.constant[block.name]
++        } else if (extraTints[block.name]) {
++          tint = extraTints[block.name]
+         } else if (block.name.includes('leaves') || block.name === 'vine') {
+           tint = tints.foliage[biome]
+         } else {
+--- a/viewer/lib/version.js
++++ b/viewer/lib/version.js
+@@ -1,4 +1,4 @@
+-const supportedVersions = ['1.8.8', '1.9.4', '1.10.2', '1.11.2', '1.12.2', '1.13.2', '1.14.4', '1.15.2', '1.16.1', '1.16.4', '1.17.1', '1.18.1', '1.19', '1.20.1', '1.21.1', '1.21.4']
++const supportedVersions = ['1.8.8', '1.9.4', '1.10.2', '1.11.2', '1.12.2', '1.13.2', '1.14.4', '1.15.2', '1.16.1', '1.16.4', '1.17.1', '1.18.1', '1.19', '1.20.1', '1.21.1', '1.21.4', '1.21.11']
+
+ const lastOfMajor = {}
+ for (const version of supportedVersions) {

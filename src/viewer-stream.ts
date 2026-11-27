@@ -5,9 +5,10 @@ import path from 'node:path'
 import type { WorldState } from './state.js'
 import type { WorldColumn } from './world.js'
 import { VIEWER_VERSION, viewerPose } from './viewer-mapping.js'
+import { bundledAssetFiles, type AssetFiles } from './viewer-assets.js'
 
 /** Independent viewer feed: subscriptions never request chunks or control the bot. */
-export function createViewerStream (server: HttpServer, world: WorldState) {
+export function createViewerStream (server: HttpServer, world: WorldState, assets: () => AssetFiles = bundledAssetFiles) {
   const io = new Server(server, {
     path: '/api/viewer/socket', serveClient: false, maxHttpBufferSize: 1024,
     allowRequest: (request, accept) => {
@@ -42,7 +43,7 @@ export function createViewerStream (server: HttpServer, world: WorldState) {
     }
     const id = ++nextId
     pending.set(id, { resolve, reject })
-    worker.postMessage({ id, version: world.blockVersion, x: column.x, z: column.z, sections })
+    worker.postMessage({ id, version: world.blockVersion, assets: assets(), x: column.x, z: column.z, sections })
   })
   io.on('connection', socket => {
     if (io.engine.clientsCount > 4) { socket.disconnect(true); return }

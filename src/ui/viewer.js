@@ -3,11 +3,11 @@ const { Viewer } = require('prismarine-viewer/viewer/lib/viewer');
 const { io } = require('socket.io-client');
 
 window.createBotViewer = async function (container, report, signal) {
-  const assets = await fetch('/viewer/blocksStates/1.21.4.json', { signal });
+  const assets = await fetch('/viewer/blocksStates.json', { signal });
   if (!assets.ok) throw new Error('Java-Blockmodelle konnten nicht geladen werden.');
   const blockStates = await assets.json();
   const atlas = new Image();
-  atlas.src = '/viewer/textures/1.21.4.png';
+  atlas.src = '/viewer/atlas.png';
   await atlas.decode();
   signal?.throwIfAborted();
   const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -17,6 +17,7 @@ window.createBotViewer = async function (container, report, signal) {
   try { viewer = new Viewer(renderer); }
   catch (error) { renderer.dispose(); renderer.forceContextLoss(); throw error; }
   viewer.world.blockStatesData = blockStates;
+  viewer.world.texturesDataUrl = '/viewer/atlas.png';
   viewer.playerHeight = 0; // Bot positions already contain eye height.
   container.append(renderer.domElement);
   renderer.domElement.tabIndex = 0;

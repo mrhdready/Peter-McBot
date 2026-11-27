@@ -13,7 +13,8 @@ for (const file of ['textures/1.21.4.png', 'blocksStates/1.21.4.json']) {
 // Bundle only the target palette and the tint data requested by upstream models.js.
 const raw = require('minecraft-data/data.js')
 const selected = { pc: {}, bedrock: {} }
-for (const version of ['1.21.4', '1.16.2']) {
+// The palette is Java 1.21.11; the copied 1.21.4 atlas/block states are only the fallback without Mojang assets.
+for (const version of ['1.21.11', '1.16.2']) {
   selected.pc[version] = Object.fromEntries(['blocks', 'blockCollisionShapes', 'biomes', 'version', 'tints'].map(key => [key, raw.pc[version][key]]))
 }
 const browserModules = {

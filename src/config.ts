@@ -3,7 +3,7 @@ import { isIP } from 'node:net'
 export type Config = {
   host: string; port: number; version: string; transport: 'nethernet' | 'raknet';
   username: string; radius: number; webHost: string; webPort: number; iceHost?: string; mapWorldId: string
-  chatCommands: boolean; openDoors: boolean
+  chatCommands: boolean; openDoors: boolean; minecraftEula: boolean
 }
 
 export function readConfig (env: NodeJS.ProcessEnv = process.env): Config {
@@ -27,8 +27,11 @@ export function readConfig (env: NodeJS.ProcessEnv = process.env): Config {
   if (chatCommands !== 'on' && chatCommands !== 'off') throw new Error('Invalid CHAT_COMMANDS (on or off)')
   const openDoors = env.OPEN_DOORS?.trim() || 'on'
   if (openDoors !== 'on' && openDoors !== 'off') throw new Error('Invalid OPEN_DOORS (on or off)')
+  // Accepting the Minecraft EULA allows downloading the client jar for the 3D viewer's textures.
+  const minecraftEula = env.MINECRAFT_EULA?.trim().toLowerCase() || 'false'
+  if (minecraftEula !== 'true' && minecraftEula !== 'false') throw new Error('Invalid MINECRAFT_EULA (true or false)')
   return {
-    chatCommands: chatCommands === 'on', openDoors: openDoors === 'on',
+    chatCommands: chatCommands === 'on', openDoors: openDoors === 'on', minecraftEula: minecraftEula === 'true',
     host, port: integer('BEDROCK_PORT', 19132, 1, 65535),
     version: env.BEDROCK_VERSION || '1.26.60', transport, username, iceHost, mapWorldId,
     radius: integer('CHUNK_RADIUS', 4, 4, 6),
