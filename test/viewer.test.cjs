@@ -11,7 +11,7 @@ const { WorldState } = require('../dist/state.js')
 const { createWebServer } = require('../dist/web.js')
 const { io } = require('socket.io-client')
 const { viewerEntity } = require('../dist/entities.js')
-const { viewerEntities, MAX_VIEWER_ENTITIES } = require('../dist/viewer-stream.js')
+const { viewerEntities, MAX_VIEWER_ENTITIES, viewerItems, MAX_VIEWER_ITEMS } = require('../dist/viewer-stream.js')
 
 const bedrock = require('prismarine-registry')('bedrock_1.26.60')
 const java = require('minecraft-data')(VIEWER_VERSION)
@@ -215,7 +215,8 @@ test('viewer socket streams the bot identity and other players with viewer-space
   world.players.set('20', { name: 'Alex', position: { x: 5, y: 65.62, z: -3 }, uniqueId: '-5', uuid: 'u', yaw: 90, pitch: 30 })
   world.players.set('21', { name: 'Bob', position: { x: 1, y: 64, z: 1 }, uniqueId: '-6', uuid: 'v' })
   world.entities.set('30', mob('horse', 2, 2, { width: 1.4, height: 1.6 }))
-  const bot = { state: world, username: 'Peter', conditions: { selfSleeping: true }, farm: { status: () => ({}) }, collector: { status: () => ({}) } }
+  world.items.set('40', { uniqueId: '-40', name: 'minecraft:wheat_seeds', count: 3, position: { x: 1, y: 64.125, z: 2 } })
+  const bot ={ state: world, username: 'Peter', conditions: { selfSleeping: true }, farm: { status: () => ({}) }, collector: { status: () => ({}) } }
   const web = createWebServer(bot)
   t.after(() => web.close())
   web.server.listen(0, '127.0.0.1'); await once(web.server, 'listening')
@@ -227,6 +228,7 @@ test('viewer socket streams the bot identity and other players with viewer-space
   assert.deepEqual(data.self, { name: 'Peter', sleeping: true })
   assert.deepEqual(data.entities, JSON.parse(JSON.stringify(viewerEntities(world))), 'mobs ride in the same packet')
   assert.equal(data.entities[0].type, 'horse')
+  assert.deepEqual(data.items, [{ id: '40', name: 'wheat_seeds', count: 3, position: { x: 1, y: 64.125, z: 2 } }], 'items ride in the same packet')
   // The expectation goes through JSON like the socket payload (-0 becomes 0).
   assert.deepEqual(data.players, JSON.parse(JSON.stringify([
     { id: '20', name: 'Alex', ...viewerPose({ x: 5, y: 65.62, z: -3 }, 90, 30) },
@@ -279,6 +281,25 @@ test('viewer entities are limited to the live radius and the nearest ones, in vi
   assert.equal(drawn.length, MAX_VIEWER_ENTITIES)
   assert.equal(drawn[0].id, '1', 'nearest first')
   assert.equal(drawn.at(-1).id, 'n' + (MAX_VIEWER_ENTITIES - 2))
+})
+
+test('viewer items are limited to the live radius and the nearest ones, without the minecraft prefix', () => {
+  const world = new WorldState(4)
+  const drop = (name, x, z, count = 1) => ({ uniqueId: '-' + x, name, count, position: { x, y: 64.125, z } })
+  world.items.set('1', drop('minecraft:dirt', 3, 4, 5))
+  assert.deepEqual(viewerItems(world), [], 'nothing without a bot position')
+  world.position = { x: 0, y: 65.62, z: 0 }
+  world.items.set('2', drop('minecraft:dirt', 70, 0))
+  world.items.set('3', drop('#999', 1, 1))
+  assert.deepEqual(viewerItems(world), [
+    { id: '3', name: '#999', count: 1, position: { x: 1, y: 64.125, z: 1 } },
+    { id: '1', name: 'dirt', count: 5, position: { x: 3, y: 64.125, z: 4 } }
+  ], 'outside the radius is dropped, nearest first, unknown IDs keep their name')
+  for (let i = 0; i < MAX_VIEWER_ITEMS + 10; i++) world.items.set('n' + i, drop('minecraft:wheat', 10 + i * .1, 0))
+  for (let i = 0; i < MAX_VIEWER_ENTITIES; i++) world.entities.set('m' + i, mob('pig', 5, 0))
+  const drawn = viewerItems(world)
+  assert.equal(drawn.length, MAX_VIEWER_ITEMS, 'mobs do not count against the item limit')
+  assert.equal(drawn.at(-1).id, 'n' + (MAX_VIEWER_ITEMS - 3))
 })
 
 test('viewer discards a column converted during a session reset and rejects foreign origins', { timeout: 15000 }, async t => {

@@ -33,6 +33,22 @@ export function viewerEntities (world: WorldState) {
   return drawn.sort((a, b) => a.distance - b.distance).slice(0, MAX_VIEWER_ENTITIES).map(item => item.entity)
 }
 
+export const MAX_VIEWER_ITEMS = 128
+
+/** Dropped items within the live radius, nearest first and at most MAX_VIEWER_ITEMS; names without the `minecraft:` prefix. */
+export function viewerItems (world: WorldState) {
+  const p = world.position
+  if (!p) return []
+  const range = world.radius * 16
+  const drawn = []
+  for (const [id, item] of world.items) {
+    const distance = (item.position.x - p.x) ** 2 + (item.position.z - p.z) ** 2
+    if (distance > range * range) continue
+    drawn.push({ distance, item: { id, name: item.name.replace(/^minecraft:/, ''), count: item.count, position: { ...item.position } } })
+  }
+  return drawn.sort((a, b) => a.distance - b.distance).slice(0, MAX_VIEWER_ITEMS).map(entry => entry.item)
+}
+
 /** Independent viewer feed: subscriptions never request chunks or control the bot. */
 export function createViewerStream (server: HttpServer, world: WorldState, assets: () => AssetFiles = bundledAssetFiles,
   self: () => ViewerSelf = () => ({ name: '', sleeping: false })) {
@@ -95,7 +111,7 @@ export function createViewerStream (server: HttpServer, world: WorldState, asset
         socket.volatile.emit('position', { ...viewerPose(world.position, world.yaw, world.pitch), session, status: world.status, coverage: world.coverage(),
           self: self(), players: [...world.players].map(([id, player]) =>
             ({ id, name: player.name, ...viewerPose({ ...player.position }, player.yaw ?? 0, player.pitch ?? 0) })),
-          entities: viewerEntities(world) })
+          entities: viewerEntities(world), items: viewerItems(world) })
         if (awaiting) return
         for (const key of sent.keys()) if (!world.chunks.has(key)) {
           const [x, z] = key.split(':').map(Number)

@@ -6,7 +6,7 @@ const { createRequire } = require('node:module')
 const { EventEmitter } = require('node:events')
 const THREE = require('three')
 
-async function cameraHarness (t) {
+async function cameraHarness (t, blockStates = {}) {
   let time = 0
   let nextFrame
   let camera
@@ -71,7 +71,7 @@ async function cameraHarness (t) {
     },
     window, AbortController, performance: { now: () => time },
     document: { createElement: () => ({ getContext: () => ({ measureText: text => ({ width: text.length * 14 }), fillRect () {}, fillText () {} }) }) },
-    fetch: async () => ({ ok: true, json: async () => ({}) }),
+    fetch: async () => ({ ok: true, json: async () => blockStates }),
     Image: class { async decode () {} },
     ResizeObserver: class { observe () {} disconnect () {} },
     requestAnimationFrame: callback => { nextFrame = callback; return 1 },
@@ -94,8 +94,8 @@ async function cameraHarness (t) {
     pointer (type, x, y = 100) {
       canvas.dispatchEvent(Object.assign(new Event(type), { clientX: x, clientY: y, button: 0, pointerId: 1 }))
     },
-    entities (players, self = { name: 'Peter', sleeping: false }, session = 1, entities = []) {
-      socket.emit('position', { ...lastPose, session, status: 'spawned', coverage: { radius: 4 }, self, players, entities })
+    entities (players, self = { name: 'Peter', sleeping: false }, session = 1, entities = [], items = []) {
+      socket.emit('position', { ...lastPose, session, status: 'spawned', coverage: { radius: 4 }, self, players, entities, items })
     },
     hover (x, y) {
       canvas.dispatchEvent(Object.assign(new Event('pointermove'), { offsetX: x, offsetY: y, button: 0, pointerId: 1 }))
@@ -170,6 +170,68 @@ test('mob boxes take hitbox size, category colour and head yaw, carry tags only 
   assert.equal(h.figures()[1].children.length, 2, 'a new name rebuilds the figure with a tag')
   h.reset(2)
   assert.deepEqual(h.figures(), [], 'a session reset removes the mobs')
+  assert.equal(h.reports.some(([, failed]) => failed), false)
+})
+
+test('dropped items are mini blocks for full-cube blocks, fallback cubes otherwise, spin, bob and show name and count on hover', async t => {
+  const texture = { u: .5, v: .25, su: .25, sv: .25 }
+  const cube = (faces, extra = {}) => ({ from: [0, 0, 0], to: [16, 16, 16], faces, ...extra })
+  const all = Object.fromEntries(['down', 'up', 'north', 'south', 'west', 'east'].map(side => [side, { texture }]))
+  const sides = Object.fromEntries(['north', 'south', 'west', 'east'].map(side => [side, { texture, tintindex: 0 }]))
+  const h = await cameraHarness(t, {
+    dirt: { variants: { '': { model: { elements: [cube(all)] } } } },
+    oak_log: { variants: { 'axis=x': { model: { elements: [] } }, 'axis=y': { model: { elements: [cube(all)] } } } },
+    grass_block: { variants: { 'snowy=false': { model: { elements: [cube(all), cube(sides)] } } } },
+    // Bedrock's `wheat` item shares its name with the crop block, a cross model of partial elements.
+    wheat: { variants: { 'age=0': { model: { elements: [{ from: [0.8, 0, 8], to: [15.2, 16, 8], faces: { north: { texture } } }] } } } },
+    oak_slab: { variants: { 'type=bottom': { model: { elements: [{ from: [0, 0, 0], to: [16, 8, 16], faces: all }] } } } }
+  })
+  const drop = (id, name, x, extra = {}) => ({ id, name, count: 1, position: { x, y: 64, z: 0 }, ...extra })
+  h.pose({ x: 0, y: 65.62, z: 10 })
+  h.entities([], undefined, 1, [], [drop('1', 'dirt', 0, { count: 3 }), drop('2', 'oak_log', 1), drop('3', 'grass_block', 2), drop('4', 'wheat', 3), drop('5', 'oak_slab', 4), drop('6', '#999', 5)])
+  h.frame(1000)
+  const [, dirt, log, grass, wheat, slab, unknown] = h.figures()
+  assert.equal(h.figures().length, 7, 'bot and six items')
+  const meshes = item => item.children[0].children
+  const [dirtMesh] = meshes(dirt)
+  assert.equal(dirtMesh.geometry.parameters.width, .25, 'full-cube blocks are mini blocks')
+  assert.ok(dirtMesh.material.map, 'mini blocks use the atlas')
+  assert.deepEqual([...dirtMesh.geometry.attributes.uv.array.slice(0, 2)], [.5, .25], 'UVs point into the atlas tile')
+  assert.equal(dirtMesh.geometry.index.count, 36)
+  // East face (first in BoxGeometry order) is shaded 0.6, the top 1.0.
+  assert.deepEqual([...dirtMesh.geometry.attributes.color.array.slice(0, 3)].map(v => +v.toFixed(3)), [.6, .6, .6])
+  assert.deepEqual([...dirtMesh.geometry.attributes.color.array.slice(24, 27)], [1, 1, 1])
+  assert.equal(meshes(log)[0].geometry.parameters.width, .25, 'logs use the axis=y variant')
+  const [grassBase, grassOverlay] = meshes(grass)
+  assert.ok(grassBase && grassOverlay, 'every full-cube element is drawn')
+  assert.ok(grassOverlay.geometry.parameters.width > .25, 'overlays sit outside the base')
+  assert.equal(grassOverlay.geometry.index.count, 24, 'faces missing in the model are left out')
+  assert.ok(Math.abs(grassOverlay.geometry.attributes.color.array[1] - .6 * 0xbd / 255) < 1e-6, 'tinted faces are green')
+  for (const fallback of [wheat, slab, unknown]) {
+    const [mesh] = meshes(fallback)
+    assert.equal(mesh.geometry.parameters.width, .2, 'everything else is a fallback cube')
+    assert.equal(mesh.material.map, null)
+  }
+  assert.notEqual(meshes(wheat)[0].material.color.getHex(), meshes(slab)[0].material.color.getHex(), 'fallback colours come from the name')
+  assert.deepEqual([dirt.position.x, dirt.position.y, dirt.position.z], [0, 64, 0], 'item positions are feet')
+  const model = dirt.children[0]
+  assert.ok(model.position.y >= .125 && model.position.y <= .325 + 1e-9, 'the item bobs above the ground')
+  const [spin, bob] = [model.rotation.y, model.position.y]
+  h.frame(1500)
+  assert.ok(Math.abs(model.rotation.y - spin - .5) < 1e-9, 'items spin at one radian per second')
+  assert.notEqual(model.position.y, bob)
+  // The camera at z=10 looks along -Z at the dirt item.
+  h.camera.position.set(0, 64 + model.position.y, 10); h.camera.rotation.set(0, 0, 0); h.camera.updateMatrixWorld()
+  dirt.updateMatrixWorld(true)
+  assert.equal(h.hover(400, 300), 'dirt ×3')
+  h.entities([], undefined, 1, [], [drop('1', 'dirt', 0, { count: 7 })])
+  assert.equal(h.figures().length, 2, 'items missing from the list are removed')
+  assert.equal(h.figures()[1], dirt, 'a new count keeps the item')
+  assert.equal(h.hover(400, 300), 'dirt ×7')
+  h.entities([], undefined, 1, [], [drop('1', 'dirt', 0, { position: { x: 0.5, y: 64, z: 0 } })]); h.frame(1516)
+  assert.ok(dirt.position.x > 0 && dirt.position.x < .5, 'movement is damped')
+  h.reset(2)
+  assert.deepEqual(h.figures(), [], 'a session reset removes the items')
   assert.equal(h.reports.some(([, failed]) => failed), false)
 })
 

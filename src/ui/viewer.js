@@ -5,6 +5,12 @@ const { io } = require('socket.io-client');
 const EYE_HEIGHT = 1.62;
 const BOT_COLOR = 0x3b82f6;
 const MOB_COLORS = { passive: 0x4caf50, hostile: 0xe53935, other: 0x9e9e9e };
+// Dropped items: BoxGeometry face order with Minecraft's fixed face shading, and the inventory green for tinted faces.
+const ITEM_SIDES = ['east', 'west', 'up', 'down', 'south', 'north'];
+const ITEM_SHADES = [.6, .6, 1, .5, .8, .8];
+const ITEM_TINT = [0x91 / 255, 0xbd / 255, 0x59 / 255];
+const ITEM_BLOCK_SIZE = .25;
+const ITEM_FALLBACK_SIZE = .2;
 
 // Same FNV-1a hash as the map's animal emoji, so a player keeps the colour across sessions.
 function nameHue (name) {
@@ -59,6 +65,13 @@ window.createBotViewer = async function (container, report, signal, playerLabel 
   const faceMaterial = new THREE.MeshLambertMaterial({ color: 0xf5f5f5 });
   const players = new Map();
   const mobs = new Map();
+  const items = new Map();
+  const itemShapes = new Map();
+  const atlasTexture = new THREE.Texture(atlas);
+  atlasTexture.flipY = false;
+  atlasTexture.magFilter = atlasTexture.minFilter = THREE.NearestFilter;
+  atlasTexture.needsUpdate = true;
+  const itemMaterial = new THREE.MeshBasicMaterial({ map: atlasTexture, vertexColors: true, alphaTest: .1 });
   const raycaster = new THREE.Raycaster();
   let botFigure = null;
   let botInfo = null;
@@ -146,7 +159,71 @@ window.createBotViewer = async function (container, report, signal, playerLabel 
     mob.model.rotation.set(0, mob.yaw, 0, 'YXZ');
     mob.head.rotation.set(mob.pitch, mob.headYaw - mob.yaw, 0, 'YXZ');
   };
+  // A block item whose default variant (axis=y for logs) is made of full cubes only; anything else (crops like
+  // `wheat`, doors, slabs, flat items) is not a block and gets the fallback cube. Grass blocks add a full-cube overlay.
+  const blockElements = name => {
+    const variants = blockStates[name]?.variants;
+    if (!variants) return null;
+    const elements = (variants[''] ?? variants['axis=y'] ?? Object.values(variants)[0])?.model?.elements;
+    const full = element => element.from.every(value => value === 0) && element.to.every(value => value === 16);
+    return elements?.length && elements.every(full) ? elements : null;
+  };
+  const itemShape = name => {
+    let shape = itemShapes.get(name);
+    if (shape) return shape;
+    const elements = blockElements(name);
+    if (elements) {
+      // Later elements (overlays) sit a hair outside the earlier ones instead of z-fighting with them.
+      const geometries = elements.map((element, layer) => {
+        const size = ITEM_BLOCK_SIZE * (1 + layer * .01);
+        const box = new THREE.BoxGeometry(size, size, size);
+        const uv = box.attributes.uv; const colors = []; const index = [];
+        ITEM_SIDES.forEach((side, face) => {
+          const texture = element.faces[side]?.texture;
+          const tint = element.faces[side]?.tintindex !== undefined ? ITEM_TINT : [1, 1, 1];
+          for (let i = face * 4; i < face * 4 + 4; i++) {
+            if (texture) uv.setXY(i, texture.u + uv.getX(i) * texture.su, texture.v + (1 - uv.getY(i)) * texture.sv);
+            colors.push(...tint.map(value => value * ITEM_SHADES[face]));
+          }
+          if (texture) index.push(...box.index.array.slice(face * 6, face * 6 + 6));
+        });
+        box.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+        box.setIndex(index);
+        return box;
+      });
+      shape = { geometries, material: itemMaterial, size: ITEM_BLOCK_SIZE };
+    } else {
+      const box = new THREE.BoxGeometry(ITEM_FALLBACK_SIZE, ITEM_FALLBACK_SIZE, ITEM_FALLBACK_SIZE);
+      box.setAttribute('color', new THREE.Float32BufferAttribute(ITEM_SHADES.flatMap(shade => Array(12).fill(shade)), 3));
+      const material = new THREE.MeshBasicMaterial({ color: new THREE.Color().setHSL(nameHue(name), .55, .55), vertexColors: true });
+      shape = { geometries: [box], material, size: ITEM_FALLBACK_SIZE };
+    }
+    itemShapes.set(name, shape);
+    return shape;
+  };
+  const createItem = item => {
+    const shape = itemShape(item.name);
+    const root = new THREE.Group();
+    const model = new THREE.Group();
+    const meshes = shape.geometries.map(box => new THREE.Mesh(box, shape.material));
+    model.add(...meshes);
+    root.add(model);
+    viewer.scene.add(root);
+    // Vanilla gives each drop a random spin and bob phase.
+    return { name: item.name, root, model, meshes, size: shape.size, phase: Math.random() * Math.PI * 2, placed: false };
+  };
+  const removeItem = item => viewer.scene.remove(item.root);
+  // Positions are feet; damped like the mobs. Spins at 1 rad/s and bobs 0.1 above and below like vanilla.
+  const followItem = (item, target, blend, seconds) => {
+    if (!item.placed || item.root.position.distanceToSquared(target.position) > 64) {
+      item.root.position.copy(target.position); item.placed = true;
+    } else item.root.position.lerp(target.position, blend);
+    item.model.rotation.y = seconds + item.phase;
+    item.model.position.y = item.size / 2 + .1 + Math.sin(seconds * 2 + item.phase) * .1;
+  };
   const clearFigures = () => {
+    for (const item of items.values()) removeItem(item);
+    items.clear();
     for (const mob of mobs.values()) removeMob(mob);
     mobs.clear();
     for (const figure of players.values()) removeFigure(figure);
@@ -178,6 +255,13 @@ window.createBotViewer = async function (container, report, signal, playerLabel 
     clearFigures();
     for (const shared of Object.values(geometry)) shared.dispose();
     faceMaterial.dispose();
+    for (const shape of itemShapes.values()) {
+      for (const box of shape.geometries) box.dispose();
+      if (shape.material !== itemMaterial) shape.material.dispose();
+    }
+    itemShapes.clear();
+    itemMaterial.dispose();
+    atlasTexture.dispose();
     viewer.resetAll();
     for (const worker of viewer.world.workers) worker.terminate();
     viewer.world.material.map?.dispose();
@@ -248,6 +332,20 @@ window.createBotViewer = async function (container, report, signal, playerLabel 
       mob.target = entity;
     }
     for (const [id, mob] of mobs) if (!seenMobs.has(id)) { removeMob(mob); mobs.delete(id); }
+    const seenItems = new Set();
+    for (const drop of data.items ?? []) {
+      if (!drop.position) continue;
+      seenItems.add(drop.id);
+      let item = items.get(drop.id);
+      if (item?.name !== drop.name) {
+        if (item) removeItem(item);
+        item = createItem(drop);
+        items.set(drop.id, item);
+      }
+      for (const mesh of item.meshes) mesh.userData.type = drop.name + ' ×' + drop.count;
+      item.target = drop;
+    }
+    for (const [id, item] of items) if (!seenItems.has(id)) { removeItem(item); items.delete(id); }
   };
   socket.on('connect_error', () => fail('3D-Verbindung fehlgeschlagen. Karte bleibt verfügbar.'));
   socket.on('disconnect', () => { if (!disposed) fail('3D-Verbindung beendet. Bitte erneut auswählen.'); });
@@ -271,10 +369,10 @@ window.createBotViewer = async function (container, report, signal, playerLabel 
     drag = { x: event.clientX, y: event.clientY };
   });
   listen(renderer.domElement, 'pointermove', event => {
-    if (!drag && mobs.size) {
-      // Hover tooltip with the mob type under the pointer.
+    if (!drag && (mobs.size || items.size)) {
+      // Hover tooltip with the mob type or the item name and count under the pointer.
       raycaster.setFromCamera(new THREE.Vector2(event.offsetX / container.clientWidth * 2 - 1, 1 - event.offsetY / container.clientHeight * 2), viewer.camera);
-      const parts = [...mobs.values()].flatMap(mob => [mob.body, mob.headBox]);
+      const parts = [...mobs.values()].flatMap(mob => [mob.body, mob.headBox]).concat([...items.values()].flatMap(item => item.meshes));
       renderer.domElement.title = raycaster.intersectObjects(parts, false)[0]?.object.userData.type ?? '';
     }
     if (!drag || mode !== 'free') return;
@@ -300,6 +398,7 @@ window.createBotViewer = async function (container, report, signal, playerLabel 
     const blend = 1 - Math.exp(-elapsed / .06);
     for (const figure of players.values()) follow(figure, figure.target, false, blend);
     for (const mob of mobs.values()) followMob(mob, mob.target, blend);
+    for (const item of items.values()) followItem(item, item.target, blend, time / 1000);
     if (botFigure) {
       // The bot's own figure would sit inside the bot-view camera, and inside a free camera that starts at the bot's eyes.
       botFigure.root.visible = mode === 'free' && !!pose?.position && viewer.camera.position.distanceToSquared(pose.position) > 2.25;

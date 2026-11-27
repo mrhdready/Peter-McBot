@@ -8,7 +8,7 @@ Stand: 27.11.2026. Ziel: Der 3D-Viewer (`docs/viewer.md`) zeigt den Bot, andere 
 |---|---|---|
 | P1 | Bot und andere Spieler als Platzhalter mit Namensschild | umgesetzt, Tests grün; Byte-Winkel-Fix für `move_entity_delta` mit P2 |
 | P2 | Tiere und Mobs: neues Tracking (`add_entity`, Bewegung, `remove_entity`, Typzuordnung); Smoke-Skript, das die Pakete als JSON-Bericht mitschneidet | umgesetzt (`src/entities.ts`), Tests grün, live bestätigt (Küken klein, `scale` 0.5) |
-| P3 | Items am Boden (`WorldState.items` gibt es schon) | offen |
+| P3 | Items am Boden (`WorldState.items` gibt es schon) | umgesetzt (`viewerItems`, `viewer.js`), Tests grün, live bestätigt (Kakao-Ernte) |
 | P4 | Echte Java-Modelle (Steve/Alex, Mobs), wenn der Jar-Cache (`MINECRAFT_EULA=true`) vorhanden ist; ohne Jar bleiben die Platzhalter. Schleichen und weitere Posen über `set_entity_data`-Flags | offen |
 | P5 | Ego-Hand in der Bot-Sicht: Arm aus dem Bot-Skin (`SkinStore`), gehaltenes Item (gewählter Hotbar-Slot + Inventar; Block-Items aus dem Atlas, flache Items aus dem Jar), Schwing-Animation bei Abbauen, Pflanzen, Truhen-/Türklick und Werfen (Ereignisse kommen vom Bot selbst über den Socket) | offen |
 
@@ -42,3 +42,16 @@ Stand: 27.11.2026. Ziel: Der 3D-Viewer (`docs/viewer.md`) zeigt den Bot, andere 
 - `trader_llama`, `nautilus` und `chest_boat` fehlen in minecraft-data. `remove_entity` kam für entfernte Fledermäuse wie erwartet. `set_entity_motion` und `set_entity_link` kamen nicht vor.
 - Nicht abgedeckt: Jungtier, benanntes Tier, feindlicher Mob. Das prüft der Live-Check im Viewer.
 - Live-Check 27.11.2026: Mob-Boxen erscheinen. `[viewer] baby chicken bounding box 0.6×0.8` zeigte, dass die Bounding Box bei Babys nicht verkleinert ist. Seitdem wird `scale` angewendet. Der Server schickt für Küken `scale` 0.5, und das Küken erscheint jetzt klein.
+
+## Entscheidungen P3
+
+- **Ablauf:** kein Smoke. Die Pakete sind durch Farming und Einsammeln bekannt. Ob die Position aus `add_item_entity` Unterkante oder Mitte ist und wie frische Drops rutschen, zeigt der Live-Check im Viewer.
+- **Daten:** unverändert. `WorldState.items` (Name, Anzahl, Position) folgt schon `move_entity`/`move_entity_delta` und verschwindet mit `take_item_entity`, `remove_entity` und `resetWorld`.
+- **Transport:** eigenes Feld `items` im volatilen `position`-Paket (`viewerItems`), gefiltert auf den Viewer-Radius, die 128 nächsten. Die Obergrenze ist getrennt von den Mobs.
+- **Aussehen:** Steht der Name ohne `minecraft:` in `blocksStates.json` und besteht seine Standardvariante (bei Achsen `axis=y`) nur aus Vollwürfeln (Elemente 0–16; der Grasblock hat ein zweites Vollwürfel-Element als Seiten-Overlay, das leicht außerhalb liegt), zeichnet der Viewer einen Mini-Block (0,25) mit Atlas-Texturen. Alles andere wird ein Ersatzwürfel (0,2), Farbe aus dem Namen gehasht: Pflanzen (`wheat` ist ein Kreuzmodell), Türen, Stufen, Treppen, flache Items und unbekannte `#<id>`. So braucht es keine Ausnahmeliste. Licht fest pro Fläche (oben 1,0, Nord/Süd 0,8, Ost/West 0,6, unten 0,5), Flächen mit `tintindex` im festen Standard-Grün.
+- **Animation:** Drehen und Wippen wie in Vanilla, nur im Client, mit zufälliger Phase pro Item. Ein Modell pro Item, auch bei Stapeln.
+- **Beschriftung:** Hover-Tooltip mit dem Registry-Namen ohne Präfix und `×Anzahl`. Kein Namensschild.
+- **Glättung:** wie P1/P2.
+- **Nicht in P3:** XP-Orbs, geworfene oder fliegende Items, Kennzeichnung der Farmer-Ziele, 2D-Karte, SSE-Snapshot. Echte Item-Texturen und -Modelle (flache Items, Stufen, Treppen) kommen mit P5.
+- **Prüfung:** Unit-Tests für den Stream (Filter, Obergrenze, Felder) und die Rendering-Logik (Erscheinen, Bewegen, Verschwinden, Mini-Block oder Ersatzwürfel, Tooltip); danach Live-Check mit gedroppten Items und einer Farm-Runde.
+- **Live-Check 27.11.2026:** Kakao geerntet. Die Bohnen erscheinen als Ersatzwürfel und liegen auf dem Boden, ohne zu schweben oder zu versinken; die Position aus `add_item_entity` ist also die Unterkante.
