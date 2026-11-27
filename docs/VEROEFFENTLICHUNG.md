@@ -4,7 +4,7 @@ Diese Kopie enthält Quellcode, Tests, Paketpatches, Konfigurationsbeispiele und
 
 ## Lokale Konfiguration
 
-Nur `.env.example` und `config/*.env.example` werden versioniert. Die ausgefüllten `.env`, `config/arcane.env` und `config/smoke.env` bleiben durch Ignore-Regeln ausgeschlossen. Dasselbe gilt für Logs, Identitätsdaten und `deploy/arcane/` mit aufgelösten Verbindungsangaben. Ignore-Regeln schützen keinen ungefilterten ZIP-Upload.
+Nur `.env.example` und `config/*.env.example` werden versioniert. Die ausgefüllten `.env` und `config/smoke.env` bleiben durch Ignore-Regeln ausgeschlossen. Dasselbe gilt für Logs und Identitätsdaten. Ignore-Regeln schützen keinen ungefilterten ZIP-Upload.
 
 Für einen Quellcode-Export ausschließlich die versionierten Dateien verwenden. Ein vorbereitetes Quellcode-Archiv enthält keine ausgefüllten Konfigurationen und keine Git-Metadaten. Vor einem Commit `git status --short` und den vorgesehenen Diff prüfen. Keine Verbindung oder Bereitstellung wird durch diese Kopie automatisch gestartet.
 

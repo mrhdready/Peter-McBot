@@ -6,7 +6,7 @@ Stand: 19.11.2026. Die Karte speichert beobachtete Oberflächen, keine vollstän
 
 `MAP_WORLD_ID=default` bezeichnet die aktuelle Welt. Beim Ersetzen oder Zurücksetzen einer Welt muss ein neuer Schlüssel gesetzt werden, beispielsweise `MAP_WORLD_ID=farm_2026_2`. Zulässig sind 1–80 Buchstaben, Ziffern, Unterstriche oder Bindestriche. Ein Weltwechsel auf derselben Serveradresse wird nicht automatisch erkannt.
 
-Der Archivpfad unter `data/maps/` wird aus normalisierter Serveradresse, Port, Transport und Kartenschlüssel abgeleitet. Dimensionen liegen in getrennten Unterordnern. Docker und das generierte Arcane-Paket verwenden das vorhandene Volume unter `/app/data`; es wird kein weiteres Volume benötigt. Bestehende Archive werden nicht automatisch gelöscht. Der Plattenbedarf wächst mit der erkundeten Fläche.
+Der Archivpfad unter `data/maps/` wird aus normalisierter Serveradresse, Port, Transport und Kartenschlüssel abgeleitet. Dimensionen liegen in getrennten Unterordnern. Docker verwendet das vorhandene Volume unter `/app/data`; es wird kein weiteres Volume benötigt. Bestehende Archive werden nicht automatisch gelöscht. Der Plattenbedarf wächst mit der erkundeten Fläche.
 
 Der Bot erfasst alle geladenen Oberflächen unabhängig von geöffneten Browsern. Pro 50-ms-Tick werden höchstens zwei geänderte Chunkspalten verarbeitet; vor Verdrängung einer Spalte oder Weltreset werden offene Beobachtungen ebenfalls übernommen. Die Oberflächenberechnung wird anhand unveränderter Abschnittsreferenzen wiederverwendet. Identische Blockupdates erzeugen keine neue Revision.
 

@@ -1,5 +1,0 @@
-# Appended to the application Dockerfile, testing its own compiled collision model.
-HEALTHCHECK NONE
-COPY --chown=node:node test/terrain.test.cjs /app/test/terrain.test.cjs
-COPY --chown=node:node container-test.cjs /test/container-test.cjs
-CMD ["node", "/test/container-test.cjs"]

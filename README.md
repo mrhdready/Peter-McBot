@@ -27,12 +27,10 @@ Versioniert werden nur die Beispiele. Ausgefüllte Dateien sind durch `.gitignor
 | Beispiel | Lokale Datei | Zweck |
 | --- | --- | --- |
 | `.env.example` | `.env` | GHCR-Image, Minecraft-Verbindung, Bot und lokale Weboberfläche/Compose |
-| `config/arcane.env.example` | `config/arcane.env` | Erzeugung des Arcane-Deployment-Pakets |
 | `config/smoke.env.example` | `config/smoke.env` | Webadresse und Dauer bewusst gestarteter Smoke-Tests |
 
 ```sh
 cp .env.example .env
-cp config/arcane.env.example config/arcane.env
 cp config/smoke.env.example config/smoke.env
 ```
 
@@ -53,9 +51,9 @@ node --env-file=.env dist/main.js
 
 Die Weboberfläche bindet standardmäßig an `127.0.0.1:3000`. `.env` wird nur mit `--env-file` geladen; `pnpm start` verwendet die vorhandene Prozessumgebung.
 
-Neben der Überschrift steht die Version aus `src/ui/version.txt`, zum Beispiel `@0.1.0`. Für einen neuen Stand die Nummer in dieser Datei ändern. `pnpm build` kopiert sie nach `dist/ui/version.txt`; Docker und die Arcane-Vorbereitung übernehmen sie ebenfalls. Die Anzeige aktualisiert sich nach Build und Neustart. Die Nummer wird manuell gepflegt.
+Neben der Überschrift steht die Version aus `src/ui/version.txt`, zum Beispiel `@0.1.0`. Die ersten drei Stellen werden manuell gepflegt. Jedes `pnpm build` (auch über `pnpm test`) zählt in einem Git-Checkout die vierte Stelle hoch (`0.4.1` → `0.4.1.1` …) und kopiert die Datei nach `dist/ui/version.txt`; der Docker-Build übernimmt die committete Nummer. Die Anzeige aktualisiert sich nach Build und Neustart.
 
-## Docker und Arcane
+## Docker
 
 Die Compose-Datei verwendet das veröffentlichte GHCR-Image. In `.env` zuerst die vollständige Adresse des eigenen Pakets setzen, beispielsweise:
 
@@ -74,12 +72,6 @@ docker compose up -d
 Image-Adresse, Minecraft-Verbindung, Botname, Chunkradius und Host-Portfreigabe werden weiterhin aus der `.env` neben `compose.yaml` interpoliert. `BOT_IMAGE` ist erforderlich; es gibt keinen fest eingebauten Repositorynamen und keinen lokalen Compose-Build. Für Updates erneut `docker compose pull` und `docker compose up -d` ausführen. Docker und Compose genügen dafür; Node.js und pnpm werden nur für lokale Quellcode-Entwicklung benötigt.
 
 Compose startet nur den Bot und erhält dessen Server-Key-Pin in einem Volume. `WEB_BIND` und `WEB_PORT` steuern die Host-Freigabe; der Listener im Container bleibt absichtlich auf `0.0.0.0:3000`. Die Standardveröffentlichung bleibt auf Loopback begrenzt. Die vorhandene Minecraft-Welt wird nicht verändert. Für den Offline-Login muss der eigene Server entsprechend konfiguriert sein.
-
-```sh
-pnpm prepare:arcane
-```
-
-Dieser Befehl liest `config/arcane.env` und erzeugt das ignorierte Verzeichnis `deploy/arcane/`. Es enthält aufgelöste Verbindungsangaben und darf nicht veröffentlicht werden. Den Ordner gezielt über die eigene Arcane-Installation bereitstellen. Der Webport wird dort zugeteilt. Ressourcenlimits: Bot 0,5 CPU / 256 MiB, Testservice 0,25 CPU / 128 MiB. Weder die Paketvorbereitung noch die Tests starten automatisch ein Deployment.
 
 ## Persistente Karte und Performance
 

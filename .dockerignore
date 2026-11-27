@@ -13,7 +13,6 @@ dist
 compatibility-result.json
 .pnpm-store
 data
-deploy/arcane
 
 # Filled machine-specific configuration stays local.
 /config/*.env

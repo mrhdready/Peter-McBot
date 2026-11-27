@@ -8,14 +8,13 @@
   },
   "packageManager": "pnpm@11.25.0",
   "scripts": {
-    "build": "tsc && node -e \"require('node:fs').cpSync('src/ui','dist/ui',{recursive:true})\" && node scripts/build-viewer.cjs",
+    "build": "node scripts/bump-build.cjs && tsc && node -e \"require('node:fs').cpSync('src/ui','dist/ui',{recursive:true})\" && node scripts/build-viewer.cjs",
     "start": "node dist/main.js",
     "test": "pnpm build && node --test test/*.test.cjs",
     "check:compatibility": "node scripts/check-compatibility.cjs",
     "probe:server": "node scripts/probe-server.cjs",
     "smoke:server": "tsc && node scripts/smoke-server.cjs",
-    "smoke:sleep": "tsc && node --env-file-if-exists=.env scripts/smoke-sleep.cjs",
-    "prepare:arcane": "node --env-file=config/arcane.env scripts/prepare-arcane.cjs"
+    "smoke:sleep": "tsc && node --env-file-if-exists=.env scripts/smoke-sleep.cjs"
   },
   "dependencies": {
     "bedrock-protocol": "3.61.0",

@@ -24,6 +24,8 @@ pnpm check:compatibility          # offline; writes ignored compatibility-result
 
 No linter or formatter is configured; `tsc` is the only static check.
 
+`pnpm build` (and therefore `pnpm test`) first runs `scripts/bump-build.cjs`, which raises the fourth part of `src/ui/version.txt` (`0.4.1` → `0.4.1.1` → `0.4.1.2` …). It skips when there is no `.git`, so Docker builds keep the committed number.
+
 **Tests are CommonJS (`.cjs`) and `require('../dist/...')`**, so they run against compiled output. Always rebuild before running a single test file, or you will be testing stale code.
 
 `scripts/probe-server.cjs` and `scripts/smoke-*.cjs` connect to a **real server**, and the movement smoke tests move a real player. Run them only when the user explicitly asks, with `node --env-file=.env --env-file=config/smoke.env scripts/<name>.cjs`.
@@ -75,5 +77,3 @@ The server operator key is pinned in `data/server-key.sha256`. Do not weaken sig
 
 - `.github/workflows/docker-build.yml` builds the Dockerfile on every push and PR. It publishes to GHCR only on a push to `main`.
 - `compose.yaml` pulls `BOT_IMAGE` from `.env`; it has no local build.
-- `pnpm prepare:arcane` reads `config/arcane.env` and generates the ignored `deploy/arcane/` from `deploy/arcane-template/`. Edit the template, not the output.
-- `test/deployment.test.cjs` checks the deployment configuration.

@@ -6,7 +6,7 @@ COPY patches ./patches
 RUN pnpm install --frozen-lockfile
 COPY tsconfig.json ./
 COPY src ./src
-COPY scripts/build-viewer.cjs scripts/viewer-globals.js ./scripts/
+COPY scripts/bump-build.cjs scripts/build-viewer.cjs scripts/viewer-globals.js ./scripts/
 RUN pnpm build
 
 FROM node:24-bookworm-slim

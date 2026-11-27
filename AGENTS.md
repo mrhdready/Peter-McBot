@@ -5,8 +5,8 @@
 - `src/` contains strict TypeScript. `bot.ts` owns the command queue and central 20-Hz heartbeat; `state.ts` and `world.ts` manage position, chunks, and coverage. `chunk-worker.ts` decodes chunks off the main thread.
 - `pathfinder.ts` provides shared planning for previews and navigation. `terrain.ts` handles collisions; `navigation.ts` handles movement. Keep previews free of movement and position changes.
 - `web.ts` contains the HTTP/SSE server. The interface lives in `src/ui/` (`index.html`, `style.css`, `app.js`); `pnpm build` copies it to `dist/ui/`, and `web.ts` reads it once at startup and inlines style and script. There is no frontend framework or bundler.
-- `test/*.test.cjs` contains tests; `test/fixtures/` holds captured protocol data. `scripts/` contains compatibility, probe, smoke-test, and deployment helpers. `docs/` contains architecture, compatibility, and publication guidance.
-- `patches/` contains required dependency patches. `deploy/arcane-template/` contains maintained deployment templates; `deploy/arcane/`, `dist/`, and `data/` are generated or local output.
+- `test/*.test.cjs` contains tests; `test/fixtures/` holds captured protocol data. `scripts/` contains compatibility, probe, smoke-test, and build helpers. `docs/` contains architecture, compatibility, and publication guidance.
+- `patches/` contains required dependency patches. `dist/` and `data/` are generated or local output.
 
 ## Build, Test, and Development Commands
 
@@ -18,7 +18,6 @@ Use Node.js 24 and pnpm 11.25.0.
 - `pnpm build` followed by `node --test test/web.test.cjs`: run focused tests.
 - Copy `.env.example` to `.env`, then run `node --env-file=.env dist/main.js`. `pnpm start` uses existing environment variables; it does not load `.env`.
 - `pnpm check:compatibility`: check dependency/protocol compatibility.
-- `pnpm prepare:arcane`: load ignored `config/arcane.env` and regenerate the Arcane deployment package.
 - `docker compose pull`, then `docker compose up -d`: fetch and run the GHCR image selected by `BOT_IMAGE` in `.env`.
 
 ## Coding Style & Naming
