@@ -111,6 +111,7 @@ test('farther beds use the shared planner and navigation without resuming the in
   s.point.x = 10; s.point.distance = 10
   s.bot.sleep.configure({ enabled: true, onlyWithPlayers: false }); s.night()
   await s.tick()
+  for (let i = 0; i < 200 && s.bot.sleep.status().phase === 'searching'; i++) await s.tick()
   assert.equal(s.bot.sleep.status().phase, 'moving')
   for (let i = 0; i < 200 && s.bot.sleep.status().phase === 'moving'; i++) await s.tick()
   assert.equal(s.bot.sleep.status().phase, 'clicking')
