@@ -3,7 +3,8 @@ import { Inventory } from './inventory.js'
 
 export type Position = { x: number; y: number; z: number }
 export type Status = 'disconnected' | 'connecting' | 'spawned' | 'reconnecting' | 'dead' | 'error'
-export type Player = { name: string; position: Position; uniqueId: string; uuid: string }
+// yaw/pitch are Bedrock degrees, unset until a packet carries them; only the 3D viewer uses them.
+export type Player = { name: string; position: Position; uniqueId: string; uuid: string; yaw?: number; pitch?: number }
 export type ItemEntity = { uniqueId: string; name: string; count: number; position: Position }
 export type NavigationState = {
   status: 'idle' | 'planning' | 'moving' | 'stopped' | 'arrived' | 'error';

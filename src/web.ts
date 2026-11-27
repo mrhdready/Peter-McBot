@@ -282,7 +282,7 @@ export function createWebServer (bot: BotController, archive?: MapArchive, place
   })
   server.requestTimeout = 10000
   server.headersTimeout = 10000
-  const closeViewer = createViewerStream(server, bot.state, assetFiles)
+  const closeViewer = createViewerStream(server, bot.state, assetFiles, () => ({ name: bot.username ?? '', sleeping: bot.conditions?.selfSleeping === true }))
   return {
     server, broadcast,
     close: () => {

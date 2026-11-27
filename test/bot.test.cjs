@@ -272,6 +272,23 @@ test('other players are tracked from add, move and remove packets and cleared wi
   bot.stop()
 })
 
+test('other players keep the look direction from add, move and delta packets for the 3D viewer', () => {
+  const { bot, clients } = setup()
+  bot.enqueue('connect'); bot.step()
+  const client = clients[0]
+  client.emit('start_game', { player_position: { x: 0, y: 64, z: 0 }, dimension: 0 })
+  client.emit('spawn')
+  client.emit('add_player', { runtime_id: 20n, unique_id: -5n, uuid: 'u', username: 'Alex', position: { x: 5, y: 65.62, z: -3 }, yaw: 90, pitch: 10 })
+  const alex = () => bot.state.players.get('20')
+  assert.equal(alex().yaw, 90); assert.equal(alex().pitch, 10)
+  client.emit('move_player', { runtime_id: 20n, position: { x: 6, y: 65.62, z: -3 }, yaw: -45, pitch: -20 })
+  assert.equal(alex().yaw, -45); assert.equal(alex().pitch, -20)
+  client.emit('move_entity_delta', { runtime_entity_id: 20n, x: 7, rot_y: 180 })
+  assert.equal(alex().yaw, 180); assert.equal(alex().pitch, -20, 'A delta without rot_x keeps the pitch')
+  assert.deepEqual(bot.state.snapshot().players, [{ id: '20', name: 'Alex', x: 7, y: 65.62, z: -3 }], 'The map snapshot is unchanged')
+  bot.stop()
+})
+
 test('the server player list excludes the bot, marks players in range and is cleared on disconnect', () => {
   const { bot, clients } = setup()
   bot.enqueue('connect'); bot.step()

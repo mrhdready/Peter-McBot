@@ -39,7 +39,7 @@ byId('world-view').onchange = async () => {
   try {
     await loadViewerBundle();
     if (generation !== viewerGeneration) return;
-    const instance = await window.createBotViewer(byId('viewer-canvas'), report, abort.signal);
+    const instance = await window.createBotViewer(byId('viewer-canvas'), report, abort.signal, name => playerAnimal(name));
     if (generation !== viewerGeneration) { instance.dispose(); return; }
     botViewer = instance;
     applyViewerMouseInversion();

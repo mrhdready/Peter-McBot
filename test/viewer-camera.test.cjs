@@ -10,6 +10,7 @@ async function cameraHarness (t) {
   let time = 0
   let nextFrame
   let camera
+  let viewer
   let positionTweens = 0
   const requireViewer = createRequire(require.resolve('prismarine-viewer/viewer/lib/viewer'))
   // Use the real viewer camera methods and tween implementation with a deterministic clock.
@@ -29,6 +30,7 @@ async function cameraHarness (t) {
   const realViewer = viewerModule.exports.Viewer.prototype
   class Viewer {
     constructor () {
+      viewer = this
       camera = this.camera = new THREE.PerspectiveCamera()
       this.world = { workers: [], material: { dispose () {} } }
       this.scene = new THREE.Scene()
@@ -68,6 +70,7 @@ async function cameraHarness (t) {
       throw new Error('Unexpected import: ' + name)
     },
     window, AbortController, performance: { now: () => time },
+    document: { createElement: () => ({ getContext: () => ({ measureText: text => ({ width: text.length * 14 }), fillRect () {}, fillText () {} }) }) },
     fetch: async () => ({ ok: true, json: async () => ({}) }),
     Image: class { async decode () {} },
     ResizeObserver: class { observe () {} disconnect () {} },
@@ -76,21 +79,63 @@ async function cameraHarness (t) {
   })
   vm.runInContext(fs.readFileSync(require.resolve('../src/ui/viewer.js'), 'utf8'), context)
   const reports = []
-  const instance = await window.createBotViewer({ clientWidth: 800, clientHeight: 600, append () {} }, (...args) => reports.push(args))
+  const instance = await window.createBotViewer({ clientWidth: 800, clientHeight: 600, append () {} }, (...args) => reports.push(args), undefined, name => '[' + name[0] + ']')
   t.after(() => instance.dispose())
   socket.emit('reset', { session: 1, version: '1.21.4' })
+  let lastPose = null
   return {
     instance, camera, reports,
     get positionTweens () { return positionTweens },
     frame (at) { time = at; nextFrame(at) },
     pose (position, yaw = 0, pitch = 0, session = 1) {
+      if (session === 1) lastPose = { position, yaw, pitch }
       socket.emit('position', { position, yaw, pitch, session, status: 'spawned', coverage: { radius: 4 } })
     },
     pointer (type, x, y = 100) {
       canvas.dispatchEvent(Object.assign(new Event(type), { clientX: x, clientY: y, button: 0, pointerId: 1 }))
-    }
+    },
+    entities (players, self = { name: 'Peter', sleeping: false }, session = 1) {
+      socket.emit('position', { ...lastPose, session, status: 'spawned', coverage: { radius: 4 }, self, players })
+    },
+    reset (session) { socket.emit('reset', { session, version: '1.21.4' }) },
+    figures () { return viewer.scene.children.filter(child => child.isGroup) }
   }
 }
+
+test('placeholder figures follow players, hide the bot in bot view and lie down while it sleeps', async t => {
+  const h = await cameraHarness(t)
+  const alex = position => ({ id: '20', name: 'Alex', position, yaw: 1, pitch: .3 })
+  h.pose({ x: 0, y: 65.62, z: 0 }, .5)
+  h.entities([alex({ x: 4, y: 65.62, z: 2 })])
+  h.frame(16)
+  assert.equal(h.figures().length, 2)
+  const [bot, player] = h.figures()
+  assert.equal(bot.visible, false, 'a free camera at the bot eyes hides the bot')
+  h.camera.position.set(0, 66, 5)
+  h.frame(24)
+  assert.ok(Math.abs(player.position.y - 64) < 1e-9, 'figures stand on the feet below the eye position')
+  assert.equal(player.position.x, 4)
+  assert.equal(player.children[0].rotation.y, 1)
+  assert.equal(bot.visible, true, 'the free camera shows the bot')
+  assert.equal(bot.children[0].rotation.y, .5)
+  h.instance.setMode('bot'); h.frame(32)
+  assert.equal(bot.visible, false, 'the bot view hides the bot')
+  h.entities([alex({ x: 6, y: 65.62, z: 2 })]); h.frame(48)
+  assert.ok(player.position.x > 4 && player.position.x < 6, 'normal movement is damped')
+  h.entities([alex({ x: 40, y: 65.62, z: 2 })]); h.frame(64)
+  assert.equal(player.position.x, 40, 'jumps over eight blocks snap')
+  h.instance.setMode('free')
+  h.camera.position.set(0, 66, 5)
+  h.entities([], { name: 'Peter', sleeping: true }); h.frame(80)
+  assert.equal(bot.visible, true)
+  assert.equal(bot.children[0].rotation.x, -Math.PI / 2)
+  assert.deepEqual(h.figures(), [bot], 'players missing from the list are removed')
+  h.entities([alex({ x: 0, y: 65, z: 0 })], undefined, 0)
+  assert.deepEqual(h.figures(), [bot], 'stale sessions are ignored')
+  h.reset(2)
+  assert.deepEqual(h.figures(), [], 'a session reset removes all figures')
+  assert.equal(h.reports.some(([, failed]) => failed), false)
+})
 
 test('bot camera follows streamed movement and height without restarting position tweens', async t => {
   const h = await cameraHarness(t)

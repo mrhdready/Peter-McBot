@@ -19,6 +19,7 @@ services:
       CHAT_COMMANDS: ${CHAT_COMMANDS:-on}
       OPEN_DOORS: ${OPEN_DOORS:-on}
       MINECRAFT_EULA: ${MINECRAFT_EULA:-false}
+      VIEWER_DEBUG_YAW: ${VIEWER_DEBUG_YAW:-0}
       WEB_HOST: 0.0.0.0
       WEB_PORT: 3000
     ports:

@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import type { Config } from './config.js'
 import { WorldState, type Position } from './state.js'
-import { Navigator } from './navigation.js'
+import { Navigator, DEBUG_YAW } from './navigation.js'
 import { RoutePlanner, type PreviewRoute, type Target } from './pathfinder.js'
 import { WorldError } from './world.js'
 import type { ContainerWindow, Inventory, TransferStep } from './inventory.js'
@@ -76,6 +76,8 @@ export class BotController {
   onChat: (sender: string, message: string) => void = () => {}
   /** Called once when a navigation run ends: arrived, failed, stopped, replaced or lost with the connection. */
   onNavigationEnd: NavigationEnd = () => {}
+
+  get username () { return this.config.username }
 
   constructor (
     private config: Config,
@@ -307,8 +309,14 @@ export class BotController {
         if (active() && Array.isArray(packet.metadata)) this.conditions.metadata(String(packet.runtime_entity_id), String(client.entityId), packet.metadata)
       })
       client.on('text', packet => { if (active()) this.conditions.notice(packet, this.config.username, this.now()) })
-      client.on('container_open', packet => { if (active()) this.sleep.opened(packet) })
-      client.on('container_close', packet => { if (active()) this.sleep.closed(packet.window_id) })
+      client.on('container_open', packet => {
+        if (DEBUG_YAW) console.log(`[nav] yaw marker container_open ${packet.window_type}`)
+        if (active()) this.sleep.opened(packet)
+      })
+      client.on('container_close', packet => {
+        if (DEBUG_YAW) console.log('[nav] yaw marker container_close')
+        if (active()) this.sleep.closed(packet.window_id)
+      })
       client.on('add_player', packet => {
         if (active() && String(packet.runtime_id) !== String(client.entityId)) this.conditions.player(String(packet.runtime_id), packet.username, packet.metadata ?? [])
       })
@@ -342,20 +350,22 @@ export class BotController {
       client.on('move_player', (packet: { runtime_id: bigint | string; position: Position; yaw?: number; pitch?: number; mode?: string | number }) => {
         if (!active()) return
         if (String(packet.runtime_id) === String(client.entityId)) {
+          if (DEBUG_YAW) console.log(`[nav] yaw server move_player ${packet.yaw} pitch ${packet.pitch} mode ${packet.mode}`)
           this.updatePosition(packet.position)
           if (Number.isFinite(packet.yaw)) this.state.yaw = packet.yaw!
           if (Number.isFinite(packet.pitch)) this.state.pitch = packet.pitch!
           if (packet.mode === 'teleport' || packet.mode === 'reset' || packet.mode === 1 || packet.mode === 2) this.navigator.acknowledgeTeleport()
-        } else this.movePlayer(packet.runtime_id, packet.position)
+        } else this.movePlayer(packet.runtime_id, packet.position, packet.yaw, packet.pitch)
       })
-      client.on('add_player', (packet: { runtime_id: bigint | string; unique_id?: bigint | string; uuid?: string; username: string; position: Position }) => {
+      client.on('add_player', (packet: { runtime_id: bigint | string; unique_id?: bigint | string; uuid?: string; username: string; position: Position; yaw?: number; pitch?: number }) => {
         const id = String(packet.runtime_id)
         if (active() && id !== String(client.entityId) && isPosition(packet.position)) {
           this.state.players.set(id, { name: String(packet.username ?? ''), position: { ...packet.position }, uniqueId: String(packet.unique_id ?? id), uuid: String(packet.uuid ?? '') })
+          this.movePlayer(id, packet.position, packet.yaw, packet.pitch)
         }
       })
-      // Delta packets carry only the changed absolute coordinates.
-      client.on('move_entity_delta', (packet: { runtime_entity_id: bigint | string; x?: number; y?: number; z?: number }) => {
+      // Delta packets carry only the changed absolute coordinates; rot_x is pitch and rot_y yaw, in degrees.
+      client.on('move_entity_delta', (packet: { runtime_entity_id: bigint | string; x?: number; y?: number; z?: number; rot_x?: number; rot_y?: number }) => {
         const id = String(packet.runtime_entity_id)
         const entity = active() ? this.state.players.get(id) ?? this.state.items.get(id) : undefined
         if (!entity) return
@@ -364,7 +374,7 @@ export class BotController {
           y: Number.isFinite(packet.y) ? packet.y! : entity.position.y,
           z: Number.isFinite(packet.z) ? packet.z! : entity.position.z
         }
-        if (this.state.players.has(id)) this.movePlayer(packet.runtime_entity_id, position)
+        if (this.state.players.has(id)) this.movePlayer(packet.runtime_entity_id, position, packet.rot_y, packet.rot_x)
         else entity.position = position
       })
       client.on('move_entity', (packet: { runtime_entity_id: bigint | string; position: Position }) => {
@@ -482,9 +492,12 @@ export class BotController {
   }
 
   // Only players announced by add_player are tracked, so other entities' movement is ignored.
-  private movePlayer (runtimeId: bigint | string, position: Position) {
+  private movePlayer (runtimeId: bigint | string, position: Position, yaw?: number, pitch?: number) {
     const player = this.state.players.get(String(runtimeId))
-    if (player && isPosition(position)) player.position = { x: position.x, y: position.y, z: position.z }
+    if (!player || !isPosition(position)) return
+    player.position = { x: position.x, y: position.y, z: position.z }
+    if (Number.isFinite(yaw)) player.yaw = yaw
+    if (Number.isFinite(pitch)) player.pitch = pitch
   }
 
   private updatePosition (position: Position) {

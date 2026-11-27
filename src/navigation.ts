@@ -12,6 +12,9 @@ const CORRECTION_HEIGHT_TOLERANCE = .1
 const UNKNOWN_WAYPOINT_WAIT_MS = 3000
 const log = (message: string) => console.log('[nav] ' + message)
 const fixed = (n: number) => n.toFixed(2)
+// Temporary diagnosis of a 3D-viewer/game yaw mismatch (docs/viewer-entities.md); remove once it is resolved.
+export const DEBUG_YAW = process.env.VIEWER_DEBUG_YAW === '1'
+const YAW_LOG_STEP = 30
 function segmentDistance (p: Target, a: Target, b: Target) {
   const lx = b.x - a.x; const lz = b.z - a.z; const length = lx * lx + lz * lz
   const t = length > 0 ? Math.max(0, Math.min(1, ((p.x - a.x) * lx + (p.z - a.z) * lz) / length)) : 0
@@ -67,6 +70,9 @@ export class Navigator {
   private progressAt = 0
   private bestDistance = Infinity
   private yaw = 0
+  // What set the yaw of the next input packet, and the last yaw logged by DEBUG_YAW.
+  private yawSource = 'walk'
+  private loggedYaw: number | null = null
   private stalledReplans = 0
   private previousWaypoint: Position | null = null
   private waitingSince: number | null = null
@@ -235,6 +241,7 @@ export class Navigator {
     const face = options.face ?? (Math.abs(dx) > Math.abs(dz) ? (dx > 0 ? 5 : 4) : (dz > 0 ? 3 : 2))
     const click = options.clickPos ?? { x: face === 5 ? 1 : face === 4 ? 0 : .5, y: .5, z: face === 3 ? 1 : face === 2 ? 0 : .5 }
     this.yaw = Math.atan2(-(block.x + .5 - p.x), block.z + .5 - p.z) * 180 / Math.PI
+    this.yawSource = 'click'
     send('inventory_transaction', { transaction: { legacy: { legacy_request_id: 0 }, transaction_type: 'item_use', actions: [],
       transaction_data: { action_type: 'click_block', trigger_type: 'player_input', block_position: { x: block.x, y: block.y, z: block.z }, face, hotbar_slot: options.hotbarSlot ?? 0, hand: 'main_hand',
         held_item: held, player_pos: { ...p }, click_pos: click, block_runtime_id: runtimeId, client_prediction: 'success', client_cooldown_state: 'off' } } })
@@ -248,6 +255,7 @@ export class Navigator {
     const p = this.world.position
     if (!p) return
     this.yaw = Math.atan2(-(point.x - p.x), point.z - p.z) * 180 / Math.PI
+    this.yawSource = 'look'
     const pitch = Math.atan2(p.y - point.y, Math.hypot(point.x - p.x, point.z - p.z)) * 180 / Math.PI
     this.sendInput(send, p, { x: 0, y: -.0784, z: 0 }, 0, this.grounded, false, { pitch, ...extra })
   }
@@ -257,6 +265,7 @@ export class Navigator {
     const p = this.world.position
     if (!p) return
     this.yaw = Math.atan2(-(toward.x - p.x), toward.z - p.z) * 180 / Math.PI
+    this.yawSource = 'face'
     this.sendInput(send, p, { x: 0, y: -.0784, z: 0 }, 0, this.grounded)
   }
 
@@ -456,6 +465,12 @@ export class Navigator {
   private sendInput (send: Send, position: Position, velocity: Position, input: number, grounded: boolean, jump = false,
     look: { pitch?: number; flags?: string[]; fields?: Record<string, unknown> } = {}) {
     const pitch = look.pitch ?? 0
+    // Only turns of at least YAW_LOG_STEP degrees are logged, so walking straight stays quiet.
+    if (DEBUG_YAW && (this.loggedYaw === null || Math.abs(((this.yaw - this.loggedYaw) % 360 + 540) % 360 - 180) >= YAW_LOG_STEP)) {
+      log(`yaw sent ${fixed(this.yaw)} pitch ${fixed(pitch)} by ${this.yawSource} at ${fixed(position.x)} ${fixed(position.y)} ${fixed(position.z)}`)
+      this.loggedYaw = this.yaw
+    }
+    this.yawSource = 'walk'
     this.world.yaw = this.yaw
     this.world.pitch = pitch
     this.inputActive = input > 0

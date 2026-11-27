@@ -4,7 +4,11 @@ Select **3D** above the map. The map remains the default. **Frei** uses mouse dr
 
 The compact **Invertieren: X / Y** switches beside **Zum Bot** independently reverse mouse dragging in the free camera. Both switches default to off; the horizontal base direction is reversed in the camera controls themselves. Both choices are saved in this browser's local storage and restored after reloading; stored choices override the defaults. If storage is blocked, the switches still work for the current page. They do not change the bot's orientation. Bot-view position and look are smoothed between network updates using frame-rate-independent damping (60 ms time constant). Yaw takes the shortest turn across the ±180° boundary. Mode switches and position jumps exceeding eight blocks snap to the bot instead of flying through intervening terrain.
 
-The backend remains headless. WebGL is required only in the browser. Loading or rendering failures return to the map. Entities, route overlays and destination selection remain outside the 3D view; use the map for navigation and markers.
+The backend remains headless. WebGL is required only in the browser. Loading or rendering failures return to the map. Route overlays and destination selection remain outside the 3D view; use the map for navigation and markers.
+
+## Bot and players
+
+The bot and other players in the server's entity range appear as placeholder figures: a body box and a head with a light face marker on the side they look at, plus a name tag. The bot is blue with 🤖; each player gets a colour hashed from the gamertag and the same animal emoji as on the map. The bot is shown only in **Frei**, not in **Bot-Sicht**, and lies down while it sleeps. Figures are damped like the bot view; jumps over eight blocks snap. Look directions come from `add_player`, `move_player` and `move_entity_delta` (`rot_x`/`rot_y`). Animals, mobs, dropped items and real models are not shown yet; see `docs/viewer-entities.md` for the phases.
 
 ## Data and limits
 
@@ -24,7 +28,7 @@ The generator (`src/viewer-assets.ts`) reads the jar with a small zip reader (st
 
 The conversion worker logs with the `[viewer]` prefix: one summary when the first 3D viewer starts (`palette java 1.21.11, assets mojang|fallback, N bedrock states unmapped, M without model`) and, once per viewer session, one line per Bedrock state that is drawn as a fallback: `[viewer] unmapped <name>[<states>] reason=<reason> at x,y,z`. `no-translation` means the table has no entry, `no-java-block` that the translated Java state does not exist in 1.21.11, and `no-model` that the active assets have no model for the Java block. These lines are the input for `VIEWER_OVERRIDES`.
 
-Palette creation and chunk conversion run in a dedicated Node worker. A Socket.IO feed on `/api/viewer/socket` sends session resets, position/look updates at up to 10 Hz, column loads/replacements and unloads. Block changes replace affected columns; there is no per-block delta protocol. Converted columns are cached by immutable section references. One column per client awaits acknowledgement, with a 15-second timeout; at most four 3D clients connect. Slow clients cannot create an unbounded chunk queue. Switching back closes the socket and disposes the rendering loop, mesh workers and WebGL resources. The conversion worker stops when the last viewer disconnects.
+Palette creation and chunk conversion run in a dedicated Node worker. A Socket.IO feed on `/api/viewer/socket` sends session resets, position/look updates at up to 10 Hz (each also carrying the bot name and sleep flag and the players with viewer-space pose), column loads/replacements and unloads. Block changes replace affected columns; there is no per-block delta protocol. Converted columns are cached by immutable section references. One column per client awaits acknowledgement, with a 15-second timeout; at most four 3D clients connect. Slow clients cannot create an unbounded chunk queue. Switching back closes the socket and disposes the rendering loop, mesh workers and WebGL resources. The conversion worker stops when the last viewer disconnects.
 
 ## Build and deployment
 

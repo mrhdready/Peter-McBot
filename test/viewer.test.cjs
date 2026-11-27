@@ -206,6 +206,31 @@ test('viewer socket streams changes, evictions and resets without moving the bot
   assert.match(html, /id="viewer-invert-y" type="checkbox" role="switch"/)
 })
 
+test('viewer socket streams the bot identity and other players with viewer-space look', { timeout: 15000 }, async t => {
+  const world = new WorldState(4)
+  world.status = 'spawned'; world.position = { x: 0, y: 65.62, z: 0 }
+  world.players.set('20', { name: 'Alex', position: { x: 5, y: 65.62, z: -3 }, uniqueId: '-5', uuid: 'u', yaw: 90, pitch: 30 })
+  world.players.set('21', { name: 'Bob', position: { x: 1, y: 64, z: 1 }, uniqueId: '-6', uuid: 'v' })
+  const bot = { state: world, username: 'Peter', conditions: { selfSleeping: true }, farm: { status: () => ({}) }, collector: { status: () => ({}) } }
+  const web = createWebServer(bot)
+  t.after(() => web.close())
+  web.server.listen(0, '127.0.0.1'); await once(web.server, 'listening')
+  const socket = io(`http://127.0.0.1:${web.server.address().port}`, { path: '/api/viewer/socket', transports: ['websocket'], reconnection: false })
+  t.after(() => socket.disconnect())
+  const [data] = await once(socket, 'position')
+  assert.equal(data.session, world.worldSession)
+  assert.deepEqual(data.position, world.position)
+  assert.deepEqual(data.self, { name: 'Peter', sleeping: true })
+  // The expectation goes through JSON like the socket payload (-0 becomes 0).
+  assert.deepEqual(data.players, JSON.parse(JSON.stringify([
+    { id: '20', name: 'Alex', ...viewerPose({ x: 5, y: 65.62, z: -3 }, 90, 30) },
+    { id: '21', name: 'Bob', ...viewerPose({ x: 1, y: 64, z: 1 }, 0, 0) }
+  ])))
+  world.players.delete('20')
+  const [later] = await once(socket, 'position')
+  assert.deepEqual(later.players.map(player => player.id), ['21'])
+})
+
 test('viewer discards a column converted during a session reset and rejects foreign origins', { timeout: 15000 }, async t => {
   const world = new WorldState()
   world.position = { x: 0, y: 65, z: 0 }

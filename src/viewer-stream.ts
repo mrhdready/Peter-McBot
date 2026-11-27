@@ -7,8 +7,11 @@ import type { WorldColumn } from './world.js'
 import { VIEWER_VERSION, viewerPose } from './viewer-mapping.js'
 import { bundledAssetFiles, type AssetFiles } from './viewer-assets.js'
 
+export type ViewerSelf = { name: string; sleeping: boolean }
+
 /** Independent viewer feed: subscriptions never request chunks or control the bot. */
-export function createViewerStream (server: HttpServer, world: WorldState, assets: () => AssetFiles = bundledAssetFiles) {
+export function createViewerStream (server: HttpServer, world: WorldState, assets: () => AssetFiles = bundledAssetFiles,
+  self: () => ViewerSelf = () => ({ name: '', sleeping: false })) {
   const io = new Server(server, {
     path: '/api/viewer/socket', serveClient: false, maxHttpBufferSize: 1024,
     allowRequest: (request, accept) => {
@@ -63,7 +66,11 @@ export function createViewerStream (server: HttpServer, world: WorldState, asset
           socket.emit('reset', { session, version: VIEWER_VERSION, radius: world.radius })
         }
         const generation = session
-        socket.volatile.emit('position', { ...viewerPose(world.position, world.yaw, world.pitch), session, status: world.status, coverage: world.coverage() })
+        // Entities ride in the same volatile packet: a second volatile emit right after this one would be
+        // dropped while the transport is still writing. Player positions are eye heights like the bot's.
+        socket.volatile.emit('position', { ...viewerPose(world.position, world.yaw, world.pitch), session, status: world.status, coverage: world.coverage(),
+          self: self(), players: [...world.players].map(([id, player]) =>
+            ({ id, name: player.name, ...viewerPose({ ...player.position }, player.yaw ?? 0, player.pitch ?? 0) })) })
         if (awaiting) return
         for (const key of sent.keys()) if (!world.chunks.has(key)) {
           const [x, z] = key.split(':').map(Number)
